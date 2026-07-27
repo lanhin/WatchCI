@@ -4,34 +4,74 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>WatchCI 配置</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-<header>
-  <h1>WatchCI 配置</h1>
-  <p>本地管理 · 写入 config/*.conf · 默认仅本机访问</p>
+<a class="skip" href="#main">跳到内容</a>
+
+<header class="top">
+  <div class="brand">
+    <span class="pulse" aria-hidden="true"><span class="pulse-ring"></span><span class="pulse-dot"></span></span>
+    <div class="brand-text">
+      <h1>WatchCI</h1>
+      <p>本机配置台 · 写入 <code>config/*.conf</code></p>
+    </div>
+  </div>
+  <p class="top-note">默认仅本机访问 · 保存后请求守护进程重载</p>
 </header>
-<nav>
-  <button type="button" id="tab-global" class="active">全局</button>
-  <button type="button" id="tab-projects">项目</button>
+
+<nav class="tabs" role="tablist" aria-label="配置分区">
+  <button type="button" role="tab" id="tab-global" class="active" aria-selected="true" aria-controls="view-global">全局</button>
+  <button type="button" role="tab" id="tab-projects" aria-selected="false" aria-controls="view-projects">项目</button>
 </nav>
-<section id="view-global">
-  <form id="form-global"></form>
-  <button type="button" id="save-global">保存全局配置</button>
-  <p id="global-msg" class="msg"></p>
-</section>
-<section id="view-projects" class="hidden">
-  <div class="row">
-    <button type="button" id="new-project">新建项目</button>
-  </div>
-  <ul id="project-list"></ul>
-  <form id="form-project" class="hidden"></form>
-  <div id="project-actions" class="hidden row">
-    <button type="button" id="save-project">保存项目</button>
-    <button type="button" id="delete-project" class="danger">删除项目</button>
-  </div>
-  <p id="project-msg" class="msg"></p>
-</section>
+
+<main id="main">
+  <section id="view-global" class="panel" role="tabpanel" aria-labelledby="tab-global">
+    <div class="panel-head">
+      <h2>全局配置</h2>
+      <p>轮询节奏、看板发布与本机管理入口</p>
+    </div>
+    <form id="form-global"></form>
+    <div class="actions">
+      <button type="button" id="save-global" class="btn btn-primary">保存全局配置</button>
+      <p id="global-msg" class="msg" role="status"></p>
+    </div>
+  </section>
+
+  <section id="view-projects" class="panel hidden" role="tabpanel" aria-labelledby="tab-projects">
+    <div class="projects-layout">
+      <aside class="project-rail" aria-label="项目列表">
+        <div class="rail-head">
+          <h2>项目</h2>
+          <button type="button" id="new-project" class="btn btn-ghost">新建</button>
+        </div>
+        <ul id="project-list"></ul>
+        <p id="project-empty" class="empty hidden">还没有项目。新建一个开始监听仓库。</p>
+      </aside>
+      <div class="project-editor">
+        <div id="project-placeholder" class="placeholder">
+          <p>从左侧选择项目，或新建一个监听目标。</p>
+        </div>
+        <div id="project-work" class="hidden">
+          <div class="panel-head">
+            <h2 id="project-title">编辑项目</h2>
+            <p id="project-sub">仓库、分支与执行脚本</p>
+          </div>
+          <form id="form-project"></form>
+          <div id="project-actions" class="actions">
+            <button type="button" id="save-project" class="btn btn-primary">保存项目</button>
+            <button type="button" id="delete-project" class="btn btn-danger">删除</button>
+            <p id="project-msg" class="msg" role="status"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
 <script src="app.js"></script>
 </body>
 </html>

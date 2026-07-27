@@ -18,6 +18,21 @@
     el.classList.toggle("err", !!err);
   };
 
+  const setTab = (which) => {
+    const global = which === "global";
+    $("tab-global").classList.toggle("active", global);
+    $("tab-projects").classList.toggle("active", !global);
+    $("tab-global").setAttribute("aria-selected", String(global));
+    $("tab-projects").setAttribute("aria-selected", String(!global));
+    $("view-global").classList.toggle("hidden", !global);
+    $("view-projects").classList.toggle("hidden", global);
+  };
+
+  const showProjectEditor = (show) => {
+    $("project-placeholder").classList.toggle("hidden", show);
+    $("project-work").classList.toggle("hidden", !show);
+  };
+
   const fieldInput = (field, value) => {
     const key = field.key;
     const wrap = document.createElement("label");
@@ -114,21 +129,64 @@
     return out;
   };
 
+  const markActive = (name) => {
+    for (const li of $("project-list").children) {
+      li.classList.toggle("active", li.dataset.name === name);
+    }
+  };
+
   const load = async () => {
     const res = await fetch("/api/config", { headers: headers() });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     schema = data.schema;
     fillForm($("form-global"), schema.global, data.global || {});
+
+    const projects = data.projects || [];
     const ul = $("project-list");
     ul.innerHTML = "";
-    for (const p of data.projects || []) {
-      const li = document.createElement("li");
+    $("project-empty").classList.toggle("hidden", projects.length > 0);
+
+    for (const p of projects) {
       const name = p.NAME || p._file;
-      const disabled = p.ENABLED === "false" ? " [已禁用]" : "";
-      li.textContent = `${name}（${p.PROVIDER || "?"}）${disabled}`;
+      const li = document.createElement("li");
+      li.dataset.name = name;
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+
+      const nm = document.createElement("span");
+      nm.className = "proj-name";
+      nm.textContent = name;
+
+      const meta = document.createElement("span");
+      meta.className = "proj-meta";
+      meta.appendChild(document.createTextNode(p.PROVIDER || "?"));
+      if (p.ENABLED === "false") {
+        const off = document.createElement("span");
+        off.className = "badge-off";
+        off.textContent = "已禁用";
+        meta.appendChild(off);
+      }
+
+      li.appendChild(nm);
+      li.appendChild(meta);
       li.onclick = () => openProject(name);
+      li.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openProject(name);
+        }
+      };
       ul.appendChild(li);
+    }
+
+    if (currentProject) {
+      const still = projects.some((p) => (p.NAME || p._file) === currentProject);
+      if (still) markActive(currentProject);
+      else {
+        currentProject = null;
+        showProjectEditor(false);
+      }
     }
   };
 
@@ -136,28 +194,22 @@
     const res = await fetch("/api/projects/" + encodeURIComponent(name), { headers: headers() });
     if (!res.ok) {
       msg("project-msg", "加载失败", true);
+      showProjectEditor(true);
       return;
     }
     const data = await res.json();
     currentProject = data.NAME || name;
+    $("form-project").dataset.create = "";
     fillForm($("form-project"), schema.project, data);
-    $("form-project").classList.remove("hidden");
-    $("project-actions").classList.remove("hidden");
-    msg("project-msg", "编辑：" + currentProject);
+    $("project-title").textContent = currentProject;
+    $("project-sub").textContent = "仓库、分支与执行脚本";
+    showProjectEditor(true);
+    markActive(currentProject);
+    msg("project-msg", "");
   };
 
-  $("tab-global").onclick = () => {
-    $("tab-global").classList.add("active");
-    $("tab-projects").classList.remove("active");
-    $("view-global").classList.remove("hidden");
-    $("view-projects").classList.add("hidden");
-  };
-  $("tab-projects").onclick = () => {
-    $("tab-projects").classList.add("active");
-    $("tab-global").classList.remove("active");
-    $("view-projects").classList.remove("hidden");
-    $("view-global").classList.add("hidden");
-  };
+  $("tab-global").onclick = () => setTab("global");
+  $("tab-projects").onclick = () => setTab("projects");
 
   $("save-global").onclick = async () => {
     const res = await fetch("/api/global", {
@@ -183,10 +235,13 @@
       TOKEN_ENV: "GITHUB_TOKEN",
     };
     fillForm($("form-project"), schema.project, data);
-    $("form-project").classList.remove("hidden");
-    $("project-actions").classList.remove("hidden");
     $("form-project").dataset.create = "1";
-    msg("project-msg", "新建：" + name + "（保存后生效）");
+    $("project-title").textContent = "新建 · " + name;
+    $("project-sub").textContent = "填写后保存才会写入配置文件";
+    showProjectEditor(true);
+    markActive(null);
+    setTab("projects");
+    msg("project-msg", "尚未保存");
   };
 
   $("save-project").onclick = async () => {
@@ -205,8 +260,11 @@
     if (res.ok) {
       $("form-project").dataset.create = "";
       currentProject = name;
+      $("project-title").textContent = name;
+      $("project-sub").textContent = "仓库、分支与执行脚本";
       msg("project-msg", "已保存并请求重载");
       await load();
+      markActive(name);
     } else {
       msg("project-msg", body.error || "失败", true);
     }
@@ -222,9 +280,8 @@
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
       currentProject = null;
-      $("form-project").classList.add("hidden");
-      $("project-actions").classList.add("hidden");
-      msg("project-msg", "已删除");
+      showProjectEditor(false);
+      msg("project-msg", "");
       await load();
     } else {
       msg("project-msg", body.error || "失败", true);
