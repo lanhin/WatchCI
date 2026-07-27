@@ -5,6 +5,7 @@
   --line: #d5dde5;
   --accent: #0b6bcb;
   --danger: #c62828;
+  --muted: #5a6b7d;
   font-family: "Source Sans 3", "Segoe UI", sans-serif;
 }
 body {
@@ -15,7 +16,7 @@ body {
   max-width: 900px;
 }
 h1 { margin: 0 0 0.25rem; }
-header p { color: #5a6b7d; margin-top: 0; }
+header p { color: var(--muted); margin-top: 0; }
 nav { display: flex; gap: 0.5rem; margin: 1rem 0; }
 nav button, .row button, #save-global {
   border: 1px solid var(--line);
@@ -32,10 +33,40 @@ form {
   border-radius: 6px;
   padding: 1rem;
   display: grid;
-  gap: 0.65rem;
+  gap: 1rem;
   margin-bottom: 0.75rem;
 }
-label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.field-group {
+  display: grid;
+  gap: 0.65rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.field-group:last-child { border-bottom: none; padding-bottom: 0; }
+.field-group h3,
+.field-group summary {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+.field-group summary { cursor: pointer; }
+label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+.field-label { font-weight: 500; }
+.field-key {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.field-help {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
 input, select {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--line);

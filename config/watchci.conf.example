@@ -1,19 +1,38 @@
-# WatchCI global config (KEY=value). Copy to watchci.conf.
+# WatchCI 全局配置（KEY=value）。复制为 watchci.conf。
+# 空值表示使用代码内默认（见各行注释）。
 
-DATA_DIR=
+# —— 运行 ——
+# 轮询间隔（秒） — 主循环间隔。所有项目共用。
 POLL_INTERVAL_SEC=60
+# 每轮最多处理事件数 — 每 tick 最多处理的 pending 条数；仍串行，并非真正并行。
 MAX_PARALLEL_RUNS=1
+# 默认超时（秒） — 项目未设 TIMEOUT_SEC 时使用。
 DEFAULT_TIMEOUT_SEC=1800
 
+# —— 看板发布 ——
+# 看板目录 — 静态结果看板输出目录；空则 data/site。
 SITE_DIR=
+# 发布命令 — 推送看板时执行的 shell 命令；空则不发布。
 PUBLISH_CMD=
+# 自动发布 — 每次重建看板后是否自动执行发布命令。
 AUTO_PUBLISH=false
 
+# —— 路径（高级） ——
+# 数据目录 — 克隆、日志、状态等运行时数据；空则仓库下 data/。
+DATA_DIR=
+# 守护进程 PID 文件 — 空则 data/watchci.pid。
 PID_FILE=
+# 守护进程日志 — 空则 data/watchci.log；配置 UI 日志为同路径加 .admin。
 LOG_FILE=
+# 配置 UI PID 文件 — 空则 data/watchci-admin.pid。
 ADMIN_PID_FILE=
 
+# —— 本机管理 ——
+# 配置 UI 监听地址 — 默认 127.0.0.1（仅本机）。非本机须设访问令牌。
 ADMIN_BIND=127.0.0.1
+# 配置 UI 端口 — 默认 8787。
 ADMIN_PORT=8787
+# 配置 UI 访问令牌 — 请求头 X-Admin-Token 或 ?token=；本机可空。
 ADMIN_TOKEN=
+# 随守护进程启动配置 UI — start 时是否后台拉起本机配置页。
 ADMIN_ENABLE=true

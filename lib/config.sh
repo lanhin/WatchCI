@@ -93,22 +93,21 @@ list_project_files() {
 }
 
 # Load one project file into current shell (caller should use subshell or reset).
-# Sets PROJECT_CONF_FILE.
 load_project_file() {
   local file="$1"
   [[ -f "$file" ]] || die "project conf not found: $file"
+  # Old project conf may still set POLL_INTERVAL_SEC; keep global interval intact.
+  local _saved_poll="${POLL_INTERVAL_SEC:-60}"
   # Reset known keys so stale values don't leak between projects.
   NAME= PROVIDER= REPO_URL= API_BASE= OWNER= REPO= BRANCHES=
   WATCH_PRS=true PR_LABELS= SCRIPT= WORKDIR= TIMEOUT_SEC=
   TOKEN_ENV= CLONE_DIR= ENABLED=true PROJECT_ID=
-  unset POLL_INTERVAL_SEC 2>/dev/null || true
-  # Re-apply global poll after unset — keep global as fallback via PROJECT_POLL later.
   # shellcheck disable=SC1090
   set -a
   # shellcheck source=/dev/null
   source "$file"
   set +a
-  PROJECT_CONF_FILE="$file"
+  POLL_INTERVAL_SEC="$_saved_poll"
   NAME="${NAME:-$(basename "$file" .conf)}"
   PROVIDER="${PROVIDER:-github}"
   WATCH_PRS="${WATCH_PRS:-true}"
@@ -119,14 +118,9 @@ load_project_file() {
   elif [[ "$CLONE_DIR" != /* ]]; then
     CLONE_DIR="$WATCHCI_ROOT/$CLONE_DIR"
   fi
-  PROJECT_POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-}"
-  # Restore global POLL_INTERVAL_SEC after project may have overridden it.
-  # shellcheck disable=SC1090
-  POLL_INTERVAL_SEC="$(grep -E '^POLL_INTERVAL_SEC=' "$GLOBAL_CONF" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-  POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-60}"
   export NAME PROVIDER REPO_URL API_BASE OWNER REPO BRANCHES WATCH_PRS PR_LABELS
   export SCRIPT WORKDIR TIMEOUT_SEC TOKEN_ENV CLONE_DIR ENABLED PROJECT_ID
-  export PROJECT_CONF_FILE PROJECT_POLL_INTERVAL_SEC
+  export POLL_INTERVAL_SEC
 }
 
 validate_project() {

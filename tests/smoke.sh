@@ -96,8 +96,30 @@ text = Path("$TMP/config/projects/smoke.conf").read_text()
 d = mod.parse_conf(text)
 assert d["NAME"] == "smoke"
 assert "REPO_URL" in d
+assert "POLL_INTERVAL_SEC" not in [f["key"] for f in mod.PROJECT_SCHEMA]
+assert any(f["key"] == "POLL_INTERVAL_SEC" for f in mod.GLOBAL_SCHEMA)
+out = mod.dump_conf({"NAME": "x", "ENABLED": "true"}, mod.PROJECT_SCHEMA)
+assert "项目名称" in out or "NAME=x" in out
+assert "# " in out
 print("config parse ok")
 PY
+
+# Stale project POLL_INTERVAL_SEC must not clobber global interval
+cat >>"$TMP/config/projects/smoke.conf" <<EOF
+POLL_INTERVAL_SEC=99999
+EOF
+bash -c '
+  source "'"$ROOT"'/lib/config.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  [[ "$POLL_INTERVAL_SEC" == "60" ]] || { echo "FAIL: global poll expected 60 got $POLL_INTERVAL_SEC"; exit 1; }
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$POLL_INTERVAL_SEC" == "60" ]] || { echo "FAIL: project POLL leaked, got $POLL_INTERVAL_SEC"; exit 1; }
+  echo "project poll isolation ok"
+'
 
 # webhook ingest smoke
 payload='{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'

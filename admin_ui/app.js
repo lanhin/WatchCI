@@ -6,8 +6,10 @@
     return h;
   };
 
-  let schema = { global: [], project: [] };
+  let schema = { global: [], project: [], groups: {} };
   let currentProject = null;
+
+  const BOOL_KEYS = new Set(["WATCH_PRS", "AUTO_PUBLISH", "ADMIN_ENABLE", "ENABLED"]);
 
   const $ = (id) => document.getElementById(id);
   const msg = (id, text, err = false) => {
@@ -16,11 +18,28 @@
     el.classList.toggle("err", !!err);
   };
 
-  const fieldInput = (key, value, isProvider = false) => {
-    const label = document.createElement("label");
-    label.textContent = key;
+  const fieldInput = (field, value) => {
+    const key = field.key;
+    const wrap = document.createElement("label");
+    const title = document.createElement("span");
+    title.className = "field-label";
+    title.textContent = field.label || key;
+    wrap.appendChild(title);
+
+    const keyHint = document.createElement("span");
+    keyHint.className = "field-key";
+    keyHint.textContent = key;
+    wrap.appendChild(keyHint);
+
+    if (field.help) {
+      const help = document.createElement("span");
+      help.className = "field-help";
+      help.textContent = field.help;
+      wrap.appendChild(help);
+    }
+
     let input;
-    if (isProvider) {
+    if (key === "PROVIDER") {
       input = document.createElement("select");
       for (const p of ["github", "gitee", "gitlab", "gitcode"]) {
         const o = document.createElement("option");
@@ -29,13 +48,16 @@
         if (p === (value || "github")) o.selected = true;
         input.appendChild(o);
       }
-    } else if (key === "WATCH_PRS" || key === "AUTO_PUBLISH" || key === "ADMIN_ENABLE" || key === "ENABLED") {
+    } else if (BOOL_KEYS.has(key)) {
       input = document.createElement("select");
-      for (const p of ["true", "false"]) {
+      for (const [v, t] of [
+        ["true", "是"],
+        ["false", "否"],
+      ]) {
         const o = document.createElement("option");
-        o.value = p;
-        o.textContent = p;
-        if (String(value || "true") === p) o.selected = true;
+        o.value = v;
+        o.textContent = t;
+        if (String(value || "true") === v) o.selected = true;
         input.appendChild(o);
       }
     } else {
@@ -43,14 +65,43 @@
       input.value = value ?? "";
     }
     input.name = key;
-    label.appendChild(input);
-    return label;
+    wrap.appendChild(input);
+    return wrap;
   };
 
   const fillForm = (form, fields, data) => {
     form.innerHTML = "";
-    for (const key of fields) {
-      form.appendChild(fieldInput(key, data[key] ?? "", key === "PROVIDER"));
+    const groups = schema.groups || {};
+    let i = 0;
+    while (i < fields.length) {
+      const g = fields[i].group || "";
+      const chunk = [];
+      while (i < fields.length && (fields[i].group || "") === g) {
+        chunk.push(fields[i]);
+        i++;
+      }
+      const title = groups[g] || g || "其它";
+      if (g === "paths") {
+        const details = document.createElement("details");
+        details.className = "field-group";
+        const summary = document.createElement("summary");
+        summary.textContent = title;
+        details.appendChild(summary);
+        for (const f of chunk) {
+          details.appendChild(fieldInput(f, data[f.key] ?? ""));
+        }
+        form.appendChild(details);
+      } else {
+        const section = document.createElement("div");
+        section.className = "field-group";
+        const h = document.createElement("h3");
+        h.textContent = title;
+        section.appendChild(h);
+        for (const f of chunk) {
+          section.appendChild(fieldInput(f, data[f.key] ?? ""));
+        }
+        form.appendChild(section);
+      }
     }
   };
 
@@ -74,7 +125,8 @@
     for (const p of data.projects || []) {
       const li = document.createElement("li");
       const name = p.NAME || p._file;
-      li.textContent = `${name} (${p.PROVIDER || "?"}) ${p.ENABLED === "false" ? "[disabled]" : ""}`;
+      const disabled = p.ENABLED === "false" ? " [已禁用]" : "";
+      li.textContent = `${name}（${p.PROVIDER || "?"}）${disabled}`;
       li.onclick = () => openProject(name);
       ul.appendChild(li);
     }
@@ -91,7 +143,7 @@
     fillForm($("form-project"), schema.project, data);
     $("form-project").classList.remove("hidden");
     $("project-actions").classList.remove("hidden");
-    msg("project-msg", "编辑: " + currentProject);
+    msg("project-msg", "编辑：" + currentProject);
   };
 
   $("tab-global").onclick = () => {
@@ -114,11 +166,11 @@
       body: JSON.stringify(formData($("form-global"))),
     });
     const body = await res.json().catch(() => ({}));
-    msg("global-msg", res.ok ? "已保存并请求 daemon 重载" : body.error || "失败", !res.ok);
+    msg("global-msg", res.ok ? "已保存并请求守护进程重载" : body.error || "失败", !res.ok);
   };
 
   $("new-project").onclick = () => {
-    const name = prompt("项目 NAME（字母数字_-）");
+    const name = prompt("项目名称（字母数字、下划线、短横线）");
     if (!name) return;
     currentProject = name;
     const data = {
@@ -134,7 +186,7 @@
     $("form-project").classList.remove("hidden");
     $("project-actions").classList.remove("hidden");
     $("form-project").dataset.create = "1";
-    msg("project-msg", "新建: " + name + "（保存后生效）");
+    msg("project-msg", "新建：" + name + "（保存后生效）");
   };
 
   $("save-project").onclick = async () => {
@@ -162,7 +214,7 @@
 
   $("delete-project").onclick = async () => {
     if (!currentProject) return;
-    if (!confirm("确认删除项目配置 " + currentProject + "？不会删除历史 run。")) return;
+    if (!confirm("确认删除项目配置「" + currentProject + "」？不会删除历史运行记录。")) return;
     const res = await fetch("/api/projects/" + encodeURIComponent(currentProject), {
       method: "DELETE",
       headers: headers(),

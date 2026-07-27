@@ -14,42 +14,233 @@ from urllib.parse import urlparse
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-GLOBAL_FIELDS = [
-    "DATA_DIR",
-    "POLL_INTERVAL_SEC",
-    "MAX_PARALLEL_RUNS",
-    "DEFAULT_TIMEOUT_SEC",
-    "SITE_DIR",
-    "PUBLISH_CMD",
-    "AUTO_PUBLISH",
-    "PID_FILE",
-    "LOG_FILE",
-    "ADMIN_PID_FILE",
-    "ADMIN_BIND",
-    "ADMIN_PORT",
-    "ADMIN_TOKEN",
-    "ADMIN_ENABLE",
+# group id (internal) -> Chinese label for UI
+GROUP_LABELS = {
+    "runtime": "运行",
+    "site": "看板发布",
+    "paths": "路径（高级）",
+    "admin": "本机管理",
+    "identity": "仓库",
+    "watch": "监听",
+    "run": "执行",
+}
+
+# {key, label, help, group} — single source for UI + dump_conf comments
+GLOBAL_SCHEMA = [
+    {
+        "key": "POLL_INTERVAL_SEC",
+        "label": "轮询间隔（秒）",
+        "help": "主循环间隔。所有项目共用。",
+        "group": "runtime",
+    },
+    {
+        "key": "MAX_PARALLEL_RUNS",
+        "label": "每轮最多处理事件数",
+        "help": "每 tick 最多处理的 pending 条数；仍串行，并非真正并行。",
+        "group": "runtime",
+    },
+    {
+        "key": "DEFAULT_TIMEOUT_SEC",
+        "label": "默认超时（秒）",
+        "help": "项目未设 TIMEOUT_SEC 时使用。",
+        "group": "runtime",
+    },
+    {
+        "key": "SITE_DIR",
+        "label": "看板目录",
+        "help": "静态结果看板输出目录；空则 data/site。",
+        "group": "site",
+    },
+    {
+        "key": "PUBLISH_CMD",
+        "label": "发布命令",
+        "help": "推送看板时执行的 shell 命令；空则不发布。",
+        "group": "site",
+    },
+    {
+        "key": "AUTO_PUBLISH",
+        "label": "自动发布",
+        "help": "每次重建看板后是否自动执行发布命令。",
+        "group": "site",
+    },
+    {
+        "key": "DATA_DIR",
+        "label": "数据目录",
+        "help": "克隆、日志、状态等运行时数据；空则仓库下 data/。",
+        "group": "paths",
+    },
+    {
+        "key": "PID_FILE",
+        "label": "守护进程 PID 文件",
+        "help": "空则 data/watchci.pid。",
+        "group": "paths",
+    },
+    {
+        "key": "LOG_FILE",
+        "label": "守护进程日志",
+        "help": "空则 data/watchci.log；配置 UI 日志为同路径加 .admin。",
+        "group": "paths",
+    },
+    {
+        "key": "ADMIN_PID_FILE",
+        "label": "配置 UI PID 文件",
+        "help": "空则 data/watchci-admin.pid。",
+        "group": "paths",
+    },
+    {
+        "key": "ADMIN_ENABLE",
+        "label": "随守护进程启动配置 UI",
+        "help": "start 时是否后台拉起本机配置页。",
+        "group": "admin",
+    },
+    {
+        "key": "ADMIN_BIND",
+        "label": "配置 UI 监听地址",
+        "help": "默认 127.0.0.1（仅本机）。非本机须设访问令牌。",
+        "group": "admin",
+    },
+    {
+        "key": "ADMIN_PORT",
+        "label": "配置 UI 端口",
+        "help": "默认 8787。",
+        "group": "admin",
+    },
+    {
+        "key": "ADMIN_TOKEN",
+        "label": "配置 UI 访问令牌",
+        "help": "请求头 X-Admin-Token 或 ?token=；本机可空。",
+        "group": "admin",
+    },
 ]
 
-PROJECT_FIELDS = [
-    "NAME",
-    "PROVIDER",
-    "REPO_URL",
-    "API_BASE",
-    "OWNER",
-    "REPO",
-    "PROJECT_ID",
-    "BRANCHES",
-    "WATCH_PRS",
-    "PR_LABELS",
-    "SCRIPT",
-    "WORKDIR",
-    "TIMEOUT_SEC",
-    "POLL_INTERVAL_SEC",
-    "TOKEN_ENV",
-    "CLONE_DIR",
-    "ENABLED",
+PROJECT_SCHEMA = [
+    {
+        "key": "NAME",
+        "label": "项目名称",
+        "help": "字母数字与下划线、短横线；通常与文件名一致。",
+        "group": "identity",
+    },
+    {
+        "key": "ENABLED",
+        "label": "启用",
+        "help": "否时跳过该项目。",
+        "group": "identity",
+    },
+    {
+        "key": "PROVIDER",
+        "label": "代码托管平台",
+        "help": "github / gitee / gitlab / gitcode。",
+        "group": "identity",
+    },
+    {
+        "key": "REPO_URL",
+        "label": "Git 远程地址",
+        "help": "用于 clone / fetch，必填。",
+        "group": "identity",
+    },
+    {
+        "key": "API_BASE",
+        "label": "API 根地址",
+        "help": "空则用平台默认（如 https://api.github.com）。",
+        "group": "identity",
+    },
+    {
+        "key": "OWNER",
+        "label": "仓库所有者",
+        "help": "平台上的 owner/org；查 PR 等 API 时需要。",
+        "group": "identity",
+    },
+    {
+        "key": "REPO",
+        "label": "仓库名",
+        "help": "平台短名（非完整 URL）。",
+        "group": "identity",
+    },
+    {
+        "key": "PROJECT_ID",
+        "label": "GitLab 项目 ID",
+        "help": "仅 GitLab 需要；其它平台留空。",
+        "group": "identity",
+    },
+    {
+        "key": "BRANCHES",
+        "label": "监听分支",
+        "help": "逗号分隔；空则按 main。",
+        "group": "watch",
+    },
+    {
+        "key": "WATCH_PRS",
+        "label": "监听 PR/MR",
+        "help": "是否轮询拉取请求。",
+        "group": "watch",
+    },
+    {
+        "key": "PR_LABELS",
+        "label": "PR 标签过滤",
+        "help": "仅 GitHub：逗号分隔；空表示不过滤。",
+        "group": "watch",
+    },
+    {
+        "key": "SCRIPT",
+        "label": "CI 脚本",
+        "help": "相对仓库根或绝对路径；必填。",
+        "group": "run",
+    },
+    {
+        "key": "WORKDIR",
+        "label": "工作目录",
+        "help": "相对克隆根；空则在克隆根执行。",
+        "group": "run",
+    },
+    {
+        "key": "TIMEOUT_SEC",
+        "label": "超时（秒）",
+        "help": "空则用全局默认超时。",
+        "group": "run",
+    },
+    {
+        "key": "TOKEN_ENV",
+        "label": "令牌环境变量名",
+        "help": "如 GITHUB_TOKEN；存的是变量名，不是令牌本身。",
+        "group": "run",
+    },
+    {
+        "key": "CLONE_DIR",
+        "label": "克隆目录",
+        "help": "空则 data/clones/<项目名>。",
+        "group": "paths",
+    },
 ]
+
+GLOBAL_FIELDS = [f["key"] for f in GLOBAL_SCHEMA]
+PROJECT_FIELDS = [f["key"] for f in PROJECT_SCHEMA]
+
+
+def dump_conf(data: dict[str, str], schema: list[dict]) -> str:
+    """Write KEY=value with Chinese comments from schema; group breaks as blank lines."""
+    lines = ["# 由 WatchCI 配置界面管理", ""]
+    seen: set[str] = set()
+    prev_group: str | None = None
+    for field in schema:
+        k = field["key"]
+        if k not in data:
+            continue
+        if prev_group is not None and field["group"] != prev_group:
+            lines.append("")
+        prev_group = field["group"]
+        label = field.get("label") or k
+        help_ = field.get("help") or ""
+        lines.append(f"# {label} — {help_}" if help_ else f"# {label}")
+        lines.append(f"{k}={data[k]}")
+        seen.add(k)
+    extras = [(k, v) for k, v in data.items() if k not in seen and not str(k).startswith("_")]
+    if extras:
+        lines.append("")
+        lines.append("# 未在 schema 中的项")
+        for k, v in extras:
+            lines.append(f"{k}={v}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def parse_conf(text: str) -> dict[str, str]:
@@ -63,20 +254,6 @@ def parse_conf(text: str) -> dict[str, str]:
         k, v = s.split("=", 1)
         data[k.strip()] = v.strip().strip('"').strip("'")
     return data
-
-
-def dump_conf(data: dict[str, str], field_order: list[str]) -> str:
-    lines = ["# Managed by WatchCI admin UI", ""]
-    seen = set()
-    for k in field_order:
-        if k in data:
-            lines.append(f"{k}={data[k]}")
-            seen.add(k)
-    for k, v in data.items():
-        if k not in seen:
-            lines.append(f"{k}={v}")
-    lines.append("")
-    return "\n".join(lines)
 
 
 def atomic_write(path: Path, content: str) -> None:
@@ -110,7 +287,7 @@ class App:
             if example.is_file():
                 atomic_write(self.global_conf, example.read_text(encoding="utf-8"))
             else:
-                atomic_write(self.global_conf, dump_conf({}, GLOBAL_FIELDS))
+                atomic_write(self.global_conf, dump_conf({}, GLOBAL_SCHEMA))
 
     def read_global(self) -> dict[str, str]:
         self.ensure_global()
@@ -119,7 +296,8 @@ class App:
     def write_global(self, data: dict[str, str]) -> None:
         cur = self.read_global()
         cur.update({k: str(v) for k, v in data.items() if v is not None})
-        atomic_write(self.global_conf, dump_conf(cur, GLOBAL_FIELDS))
+        # drop removed project-poll key if somehow present in global write payload
+        atomic_write(self.global_conf, dump_conf(cur, GLOBAL_SCHEMA))
         self.request_reload(cur)
 
     def list_projects(self) -> list[dict[str, str]]:
@@ -138,7 +316,6 @@ class App:
     def read_project(self, name: str) -> dict[str, str] | None:
         path = self.project_path(name)
         if not path.is_file():
-            # try match NAME inside files
             for p in self.projects_dir.glob("*.conf"):
                 d = parse_conf(p.read_text(encoding="utf-8"))
                 if d.get("NAME") == name or p.stem == name:
@@ -151,24 +328,23 @@ class App:
 
     def write_project(self, name: str, data: dict[str, str], create: bool = False) -> None:
         if not NAME_RE.match(name):
-            raise ValueError("invalid NAME")
+            raise ValueError("项目名称无效（仅字母数字、下划线、短横线）")
         path = self.project_path(name)
         if create and path.is_file():
-            raise ValueError("project exists")
+            raise ValueError("项目已存在")
         if not create and not path.is_file():
-            # allow update via NAME when file is name.conf
-            if not path.is_file():
-                raise ValueError("project not found")
+            raise ValueError("项目不存在")
         cur = parse_conf(path.read_text(encoding="utf-8")) if path.is_file() else {}
         cur.update({k: str(v) for k, v in data.items() if not str(k).startswith("_") and v is not None})
+        cur.pop("POLL_INTERVAL_SEC", None)  # dead project key; never rewrite
         cur["NAME"] = name
-        atomic_write(path, dump_conf(cur, PROJECT_FIELDS))
+        atomic_write(path, dump_conf(cur, PROJECT_SCHEMA))
         self.request_reload(self.read_global())
 
     def delete_project(self, name: str) -> None:
         path = self.project_path(name)
         if not path.is_file():
-            raise ValueError("project not found")
+            raise ValueError("项目不存在")
         path.unlink()
         self.request_reload(self.read_global())
 
@@ -196,16 +372,15 @@ def make_handler(app: App, token: str, bind: str):
             if bind in ("127.0.0.1", "localhost", "::1") and not token:
                 return True
             if not token:
-                self._json(403, {"error": "ADMIN_TOKEN required when not binding localhost"})
+                self._json(403, {"error": "非本机监听时必须设置访问令牌"})
                 return False
             got = self.headers.get("X-Admin-Token") or ""
             if got != token:
-                # also allow ?token=
                 q = urlparse(self.path).query
                 if f"token={token}" not in q.split("&") and not any(
                     p == f"token={token}" for p in q.split("&")
                 ):
-                    self._json(401, {"error": "unauthorized"})
+                    self._json(401, {"error": "未授权"})
                     return False
             return True
 
@@ -257,7 +432,11 @@ def make_handler(app: App, token: str, bind: str):
                     {
                         "global": app.read_global(),
                         "projects": app.list_projects(),
-                        "schema": {"global": GLOBAL_FIELDS, "project": PROJECT_FIELDS},
+                        "schema": {
+                            "global": GLOBAL_SCHEMA,
+                            "project": PROJECT_SCHEMA,
+                            "groups": GROUP_LABELS,
+                        },
                     },
                 )
                 return
@@ -265,12 +444,12 @@ def make_handler(app: App, token: str, bind: str):
                 name = path[len("/api/projects/") :].strip("/")
                 proj = app.read_project(name)
                 if not proj:
-                    self._json(404, {"error": "not found"})
+                    self._json(404, {"error": "未找到"})
                     return
                 self._json(200, proj)
                 return
             if path.startswith("/api/"):
-                self._json(404, {"error": "not found"})
+                self._json(404, {"error": "未找到"})
                 return
             self._serve_static(path)
 
@@ -282,7 +461,7 @@ def make_handler(app: App, token: str, bind: str):
             try:
                 data = self._read_json()
             except json.JSONDecodeError:
-                self._json(400, {"error": "invalid json"})
+                self._json(400, {"error": "无效的 JSON"})
                 return
             try:
                 if path == "/api/global":
@@ -297,19 +476,19 @@ def make_handler(app: App, token: str, bind: str):
             except ValueError as e:
                 self._json(400, {"error": str(e)})
                 return
-            self._json(404, {"error": "not found"})
+            self._json(404, {"error": "未找到"})
 
         def do_POST(self):  # noqa: N802
             if not self._check_auth():
                 return
             parsed = urlparse(self.path)
             if parsed.path != "/api/projects":
-                self._json(404, {"error": "not found"})
+                self._json(404, {"error": "未找到"})
                 return
             try:
                 data = self._read_json()
             except json.JSONDecodeError:
-                self._json(400, {"error": "invalid json"})
+                self._json(400, {"error": "无效的 JSON"})
                 return
             name = str(data.get("NAME") or "").strip()
             try:
@@ -324,7 +503,7 @@ def make_handler(app: App, token: str, bind: str):
             parsed = urlparse(self.path)
             path = parsed.path
             if not path.startswith("/api/projects/"):
-                self._json(404, {"error": "not found"})
+                self._json(404, {"error": "未找到"})
                 return
             name = path[len("/api/projects/") :].strip("/")
             try:
@@ -351,18 +530,18 @@ def main() -> None:
     args = ap.parse_args()
     root = Path(args.root).resolve()
     if args.bind not in ("127.0.0.1", "localhost", "::1") and not args.token:
-        raise SystemExit("ADMIN_TOKEN required when ADMIN_BIND is not localhost")
+        raise SystemExit("非本机监听时必须设置 ADMIN_TOKEN")
     app = App(root, args.token, Path(args.daemon_pid_file or root / "data" / "watchci.pid"))
     handler = make_handler(app, args.token, args.bind)
     ThreadingHTTPServer.allow_reuse_address = True
     try:
         server = ThreadingHTTPServer((args.bind, args.port), handler)
     except OSError as e:
-        raise SystemExit(f"cannot bind {args.bind}:{args.port}: {e}") from e
+        raise SystemExit(f"无法绑定 {args.bind}:{args.port}: {e}") from e
     if args.pid_file:
         Path(args.pid_file).parent.mkdir(parents=True, exist_ok=True)
         Path(args.pid_file).write_text(str(os.getpid()) + "\n", encoding="utf-8")
-    print(f"WatchCI admin UI http://{args.bind}:{args.port}/", flush=True)
+    print(f"WatchCI 配置界面 http://{args.bind}:{args.port}/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
