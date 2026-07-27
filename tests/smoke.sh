@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$ROOT/data/smoke-tmp"
 rm -rf "$TMP"
-mkdir -p "$TMP/remote" "$TMP/work"
+mkdir -p "$TMP/remote" "$TMP/work" "$TMP/config/projects"
 
 # Create a tiny git repo and bare remote
 git -C "$TMP/work" init -q -b main
@@ -20,10 +20,10 @@ git -C "$TMP/work" remote add origin "$TMP/remote"
 git init -q --bare "$TMP/remote"
 git -C "$TMP/work" push -q origin main
 
-# Global conf for smoke (isolated data dir)
+# Isolated config — do not touch repo config/watchci.conf
 SMOKE_DATA="$TMP/data"
-mkdir -p "$SMOKE_DATA" "$ROOT/config/projects"
-cat >"$ROOT/config/watchci.conf" <<EOF
+mkdir -p "$SMOKE_DATA"
+cat >"$TMP/config/watchci.conf" <<EOF
 DATA_DIR=$SMOKE_DATA
 POLL_INTERVAL_SEC=60
 MAX_PARALLEL_RUNS=1
@@ -35,7 +35,7 @@ ADMIN_BIND=127.0.0.1
 ADMIN_PORT=8787
 EOF
 
-cat >"$ROOT/config/projects/smoke.conf" <<EOF
+cat >"$TMP/config/projects/smoke.conf" <<EOF
 NAME=smoke
 PROVIDER=github
 REPO_URL=$TMP/remote
@@ -47,6 +47,10 @@ SCRIPT=./run-ci.sh
 ENABLED=true
 TIMEOUT_SEC=60
 EOF
+
+export CONFIG_DIR="$TMP/config"
+export GLOBAL_CONF="$TMP/config/watchci.conf"
+export PROJECTS_DIR="$TMP/config/projects"
 
 # First tick: clone + detect branch + run
 "$ROOT/bin/watchci" tick
@@ -67,17 +71,28 @@ git -C "$TMP/work" push -q origin main
 metas2=("$SMOKE_DATA"/runs/*.meta.json)
 [[ ${#metas2[@]} -ge 2 ]] || { echo "FAIL: expected second run"; exit 1; }
 
+# Env override must win over conf (ADMIN_ENABLE=false in smoke conf)
+out="$(ADMIN_ENABLE=true "$ROOT/bin/watchci" status)"
+echo "$out" | grep -q 'ADMIN' || true
+# status prints admin=; force a quick check via python parse + env restore unit
+ADMIN_ENABLE=true bash -c '
+  source "'"$ROOT"'/lib/config.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$ADMIN_ENABLE" == "true" ]] || { echo "FAIL: env ADMIN_ENABLE override lost"; exit 1; }
+  echo "env override ok"
+'
+
 # Config parse round-trip via admin module
 python3 - <<PY
 from pathlib import Path
-import sys
-sys.path.insert(0, "$ROOT/lib")
-# quick conf parse check by importing logic
 import importlib.util
 spec = importlib.util.spec_from_file_location("config_admin", "$ROOT/lib/config_admin.py")
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-text = Path("$ROOT/config/projects/smoke.conf").read_text()
+text = Path("$TMP/config/projects/smoke.conf").read_text()
 d = mod.parse_conf(text)
 assert d["NAME"] == "smoke"
 assert "REPO_URL" in d

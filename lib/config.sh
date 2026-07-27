@@ -32,6 +32,36 @@ _apply_global_defaults() {
   export ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_ENABLE
 }
 
+# Keys that may be set on the CLI env and should win over conf file.
+_ENV_OVERRIDE_KEYS=(
+  ADMIN_ENABLE ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_PID_FILE
+  POLL_INTERVAL_SEC DATA_DIR SITE_DIR PUBLISH_CMD AUTO_PUBLISH
+  PID_FILE LOG_FILE MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC
+)
+
+_save_env_overrides() {
+  local k
+  for k in "${_ENV_OVERRIDE_KEYS[@]}"; do
+    if [[ -n "${!k+x}" ]]; then
+      printf -v "_ENV_OV_$k" '%s' "${!k}"
+      printf -v "_ENV_SET_$k" '%s' 1
+    else
+      printf -v "_ENV_SET_$k" '%s' 0
+    fi
+  done
+}
+
+_restore_env_overrides() {
+  local k
+  for k in "${_ENV_OVERRIDE_KEYS[@]}"; do
+    local set_var="_ENV_SET_$k"
+    local val_var="_ENV_OV_$k"
+    if [[ "${!set_var}" == "1" ]]; then
+      printf -v "$k" '%s' "${!val_var}"
+    fi
+  done
+}
+
 load_global_config() {
   if [[ ! -f "$GLOBAL_CONF" ]]; then
     if [[ -f "$CONFIG_DIR/watchci.conf.example" ]]; then
@@ -41,11 +71,13 @@ load_global_config() {
       die "missing global config: $GLOBAL_CONF"
     fi
   fi
+  _save_env_overrides
   # shellcheck disable=SC1090
   set -a
   # shellcheck source=/dev/null
   source "$GLOBAL_CONF"
   set +a
+  _restore_env_overrides
   _apply_global_defaults
   ensure_dirs
 }

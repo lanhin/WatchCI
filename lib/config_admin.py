@@ -354,8 +354,13 @@ def main() -> None:
         raise SystemExit("ADMIN_TOKEN required when ADMIN_BIND is not localhost")
     app = App(root, args.token, Path(args.daemon_pid_file or root / "data" / "watchci.pid"))
     handler = make_handler(app, args.token, args.bind)
-    server = ThreadingHTTPServer((args.bind, args.port), handler)
+    ThreadingHTTPServer.allow_reuse_address = True
+    try:
+        server = ThreadingHTTPServer((args.bind, args.port), handler)
+    except OSError as e:
+        raise SystemExit(f"cannot bind {args.bind}:{args.port}: {e}") from e
     if args.pid_file:
+        Path(args.pid_file).parent.mkdir(parents=True, exist_ok=True)
         Path(args.pid_file).write_text(str(os.getpid()) + "\n", encoding="utf-8")
     print(f"WatchCI admin UI http://{args.bind}:{args.port}/", flush=True)
     try:

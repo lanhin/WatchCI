@@ -76,21 +76,47 @@ daemon_tick() {
 }
 
 daemon_start_admin_if_enabled() {
-  [[ "${ADMIN_ENABLE}" == "true" || "${ADMIN_ENABLE}" == "1" ]] || return 0
-  if [[ -f "$ADMIN_PID_FILE" ]] && kill -0 "$(cat "$ADMIN_PID_FILE")" 2>/dev/null; then
-    info "admin UI already running pid=$(cat "$ADMIN_PID_FILE")"
+  [[ "${ADMIN_ENABLE}" == "true" || "${ADMIN_ENABLE}" == "1" ]] || {
+    info "admin UI disabled (ADMIN_ENABLE=${ADMIN_ENABLE:-})"
+    return 0
+  }
+  if [[ -f "$ADMIN_PID_FILE" ]] && kill -0 "$(cat "$ADMIN_PID_FILE" 2>/dev/null || true)" 2>/dev/null; then
+    info "admin UI already running pid=$(cat "$ADMIN_PID_FILE") http://${ADMIN_BIND}:${ADMIN_PORT}/"
     return 0
   fi
   info "starting admin UI on ${ADMIN_BIND}:${ADMIN_PORT}"
+  mkdir -p "$(dirname "$ADMIN_PID_FILE")" "$(dirname "${LOG_FILE}.admin")"
+  : >>"${LOG_FILE}.admin"
   nohup python3 "$WATCHCI_ROOT/lib/config_admin.py" \
     --root "$WATCHCI_ROOT" \
     --bind "$ADMIN_BIND" \
     --port "$ADMIN_PORT" \
-    --token "$ADMIN_TOKEN" \
+    --token "${ADMIN_TOKEN:-}" \
     --pid-file "$ADMIN_PID_FILE" \
     --daemon-pid-file "$PID_FILE" \
     >>"${LOG_FILE}.admin" 2>&1 &
-  echo $! >"$ADMIN_PID_FILE"
+  local bgpid=$!
+  # Provisional pid (same process as python); python may rewrite the file.
+  echo "$bgpid" >"$ADMIN_PID_FILE"
+  local i=0
+  while [[ "$i" -lt 50 ]]; do
+    if kill -0 "$bgpid" 2>/dev/null; then
+      # Still alive — check port is accepting (python finished bind)
+      if python3 -c "import socket;s=socket.socket();s.settimeout(0.2);s.connect(('${ADMIN_BIND}', int('${ADMIN_PORT}')));s.close()" 2>/dev/null; then
+        info "admin UI ready pid=$bgpid http://${ADMIN_BIND}:${ADMIN_PORT}/"
+        return 0
+      fi
+    else
+      break
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  warn "admin UI failed to start; see ${LOG_FILE}.admin"
+  tail -n 30 "${LOG_FILE}.admin" 2>/dev/null >&2 || true
+  rm -f "$ADMIN_PID_FILE"
+  # ponytail: don't abort daemon if admin UI fails
+  return 0
 }
 
 daemon_stop_admin() {
