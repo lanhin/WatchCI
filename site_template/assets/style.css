@@ -1,0 +1,73 @@
+:root {
+  --bg: #0f1419;
+  --fg: #e7ecf1;
+  --muted: #8b9aab;
+  --ok: #3dd68c;
+  --fail: #f07178;
+  --warn: #ffcc66;
+  --card: #1a2332;
+  --line: #2a3544;
+  --accent: #5eb1ff;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 10% -10%, #1a2a40, var(--bg));
+  color: var(--fg);
+  min-height: 100vh;
+  padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem;
+}
+.top h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.02em; }
+.top .sub, .top a { color: var(--muted); }
+.projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  padding: 1rem;
+  border-radius: 4px;
+}
+.card.status-success { border-left-color: var(--ok); }
+.card.status-failure { border-left-color: var(--fail); }
+.card.status-timeout { border-left-color: var(--warn); }
+.badge { font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+.status-success { color: var(--ok); }
+.status-failure { color: var(--fail); }
+.status-timeout { color: var(--warn); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.9em; }
+.filters { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; }
+.filters input, .filters select {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+}
+pre.log {
+  background: #0a0e14;
+  border: 1px solid var(--line);
+  padding: 1rem;
+  overflow: auto;
+  max-height: 70vh;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.meta th { width: 8rem; color: var(--muted); }

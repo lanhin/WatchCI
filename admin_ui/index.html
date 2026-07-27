@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>WatchCI Config</title>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<header>
+  <h1>WatchCI 配置</h1>
+  <p>本地管理 · 写入 config/*.conf · 默认仅本机访问</p>
+</header>
+<nav>
+  <button type="button" id="tab-global" class="active">全局</button>
+  <button type="button" id="tab-projects">项目</button>
+</nav>
+<section id="view-global">
+  <form id="form-global"></form>
+  <button type="button" id="save-global">保存全局配置</button>
+  <p id="global-msg" class="msg"></p>
+</section>
+<section id="view-projects" class="hidden">
+  <div class="row">
+    <button type="button" id="new-project">新建项目</button>
+  </div>
+  <ul id="project-list"></ul>
+  <form id="form-project" class="hidden"></form>
+  <div id="project-actions" class="hidden row">
+    <button type="button" id="save-project">保存项目</button>
+    <button type="button" id="delete-project" class="danger">删除项目</button>
+  </div>
+  <p id="project-msg" class="msg"></p>
+</section>
+<script src="app.js"></script>
+</body>
+</html>

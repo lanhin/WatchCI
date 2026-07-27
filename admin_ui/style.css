@@ -1,0 +1,58 @@
+:root {
+  --bg: #f4f6f8;
+  --fg: #1b2430;
+  --card: #fff;
+  --line: #d5dde5;
+  --accent: #0b6bcb;
+  --danger: #c62828;
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+}
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #e8eef5, var(--bg));
+  color: var(--fg);
+  padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 3rem;
+  max-width: 900px;
+}
+h1 { margin: 0 0 0.25rem; }
+header p { color: #5a6b7d; margin-top: 0; }
+nav { display: flex; gap: 0.5rem; margin: 1rem 0; }
+nav button, .row button, #save-global {
+  border: 1px solid var(--line);
+  background: var(--card);
+  padding: 0.45rem 0.9rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.hidden { display: none !important; }
+form {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+input, select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+#project-list { list-style: none; padding: 0; }
+#project-list li {
+  background: var(--card);
+  border: 1px solid var(--line);
+  margin-bottom: 0.4rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#project-list li:hover { border-color: var(--accent); }
+.danger { color: var(--danger) !important; border-color: #f5c2c2 !important; }
+.msg { min-height: 1.2em; color: #2e7d32; }
+.msg.err { color: var(--danger); }
+.row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }

@@ -1,0 +1,16 @@
+data/clones/
+data/state/
+data/events/
+data/logs/
+data/runs/
+data/site/
+data/smoke-tmp/
+data/*.pid
+data/*.log
+config/watchci.conf
+config/projects/*.conf
+!config/projects/example.conf
+!config/watchci.conf.example
+*.pyc
+__pycache__/
+.DS_Store

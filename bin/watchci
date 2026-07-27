@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# WatchCI entrypoint.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export WATCHCI_ROOT="$ROOT"
+# shellcheck source=../lib/daemon.sh
+source "$ROOT/lib/daemon.sh"
+
+usage() {
+  cat <<EOF
+Usage: watchci <command>
+
+  start     Start daemon (poll loop; optional admin UI)
+  stop      Stop daemon and admin UI
+  status    Show status
+  ui        Run config admin UI in foreground
+  publish   Publish static site via PUBLISH_CMD
+  tick      Run one poll+drain cycle (debug)
+  rebuild-site  Rebuild static dashboard from existing runs
+
+Config: $ROOT/config/watchci.conf
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  start)
+    _source_runtime
+    load_global_config
+    if daemon_is_running; then
+      die "already running pid=$(cat "$PID_FILE")"
+    fi
+    # foreground by default; user may nohup
+    daemon_loop
+    ;;
+  stop)
+    daemon_stop
+    ;;
+  status)
+    daemon_status
+    ;;
+  ui)
+    daemon_ui_only
+    ;;
+  publish)
+    _source_runtime
+    load_global_config
+    site_publish
+    ;;
+  tick)
+    daemon_tick
+    ;;
+  rebuild-site)
+    _source_runtime
+    load_global_config
+    site_rebuild_all
+    ;;
+  -h|--help|help|"")
+    usage
+    [[ -n "$cmd" ]] || exit 1
+    ;;
+  *)
+    usage
+    die "unknown command: $cmd"
+    ;;
+esac
