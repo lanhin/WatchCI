@@ -173,6 +173,79 @@ done
 [[ "$pr_ok" -eq 1 ]] || { echo "FAIL: PR-only ref checkout/run"; exit 1; }
 echo "pr head fetch ok"
 
+# PR diverge, no conflict: main advanced with another file → merge should succeed
+echo "main-ahead" >"$TMP/work/main-ahead.txt"
+git -C "$TMP/work" add main-ahead.txt
+git -C "$TMP/work" commit -q -m "main-ahead"
+git -C "$TMP/work" push -q origin main
+git -C "$TMP/work" push -q origin "$PR_SHA:refs/pull/2/head"
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  source "'"$ROOT"'/lib/config.sh"
+  source "'"$ROOT"'/lib/events.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  event_enqueue smoke pr fix/pr-diverge "'"$PR_SHA"'" 2 smoke
+'
+"$ROOT/bin/watchci" tick
+pr_merge_ok=0
+for m in "$SMOKE_DATA"/runs/*.meta.json; do
+  if grep -q '"pr_id": "2"' "$m" 2>/dev/null || grep -q '"pr_id":"2"' "$m" 2>/dev/null; then
+    if grep -q '"status": "success"' "$m"; then
+      pr_merge_ok=1
+      break
+    fi
+  fi
+done
+[[ "$pr_merge_ok" -eq 1 ]] || { echo "FAIL: diverge-without-conflict PR should succeed"; exit 1; }
+echo "pr diverge merge ok"
+
+# PR conflict: both sides edit conflict.txt → merge must fail
+git -C "$TMP/work" reset -q --hard origin/main
+echo "from-pr" >"$TMP/work/conflict.txt"
+git -C "$TMP/work" add conflict.txt
+git -C "$TMP/work" commit -q -m "pr-conflict"
+PR_CONFLICT_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+git -C "$TMP/work" push -q origin "HEAD:refs/pull/3/head"
+git -C "$TMP/work" reset -q --hard origin/main
+echo "from-main" >"$TMP/work/conflict.txt"
+git -C "$TMP/work" add conflict.txt
+git -C "$TMP/work" commit -q -m "main-conflict"
+git -C "$TMP/work" push -q origin main
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  source "'"$ROOT"'/lib/config.sh"
+  source "'"$ROOT"'/lib/events.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  event_enqueue smoke pr fix/pr-conflict "'"$PR_CONFLICT_SHA"'" 3 smoke
+'
+"$ROOT/bin/watchci" tick
+pr_conflict_fail=0
+pr_conflict_log=
+for m in "$SMOKE_DATA"/runs/*.meta.json; do
+  if grep -q '"pr_id": "3"' "$m" 2>/dev/null || grep -q '"pr_id":"3"' "$m" 2>/dev/null; then
+    if grep -q '"status": "failure"' "$m"; then
+      pr_conflict_fail=1
+      pr_conflict_log="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("log",""))' "$m")"
+      break
+    fi
+  fi
+done
+[[ "$pr_conflict_fail" -eq 1 ]] || { echo "FAIL: conflicting PR should fail merge"; exit 1; }
+grep -q 'merge failed' "$pr_conflict_log" || { echo "FAIL: missing merge failed log"; cat "$pr_conflict_log"; exit 1; }
+# clone left clean detached (no conflict markers / no merge in progress)
+clone_dir="$SMOKE_DATA/clones/smoke"
+git -C "$clone_dir" rev-parse --verify MERGE_HEAD >/dev/null 2>&1 && { echo "FAIL: MERGE_HEAD left behind"; exit 1; }
+[[ -z "$(git -C "$clone_dir" status --porcelain)" ]] || { echo "FAIL: clone dirty after conflict run"; git -C "$clone_dir" status; exit 1; }
+echo "pr conflict failure + cleanup ok"
+
 # provider_api_get: on 502, log redacted command (no token leak)
 fakebin="$TMP/fakebin"
 mkdir -p "$fakebin"

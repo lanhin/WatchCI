@@ -42,10 +42,33 @@ _pr_head_ref() {
   esac
 }
 
-# Fetch + detach to event sha. PR heads often live only under pull/MR refs.
+# First BRANCHES entry, or main (same default as poll).
+_pr_base_branch() {
+  local first
+  first="${BRANCHES%%,*}"
+  first="${first#"${first%%[![:space:]]*}"}"
+  first="${first%"${first##*[![:space:]]}"}"
+  echo "${first:-main}"
+}
+
+# Reset clone to clean detached origin/<base>; no local branches left dirty.
+_clone_cleanup() {
+  [[ -n "${CLONE_DIR:-}" && -d "${CLONE_DIR}/.git" ]] || return 0
+  git -C "$CLONE_DIR" merge --abort >/dev/null 2>&1 || true
+  git -C "$CLONE_DIR" rebase --abort >/dev/null 2>&1 || true
+  local base
+  base="$(_pr_base_branch)"
+  if git -C "$CLONE_DIR" rev-parse --verify "origin/$base" >/dev/null 2>&1; then
+    git -C "$CLONE_DIR" checkout --detach "origin/$base" >/dev/null 2>&1 || true
+  fi
+  git -C "$CLONE_DIR" reset --hard >/dev/null 2>&1 || true
+  git -C "$CLONE_DIR" clean -fd >/dev/null 2>&1 || true
+}
+
+# Fetch + detach to event sha. PR: merge into base (conflict → fail); detached only (no temp branch).
 _checkout_sha() {
   local sha="$1" kind="$2" pr_id="$3" log_path="$4"
-  local pr_ref
+  local pr_ref base
 
   if ! git -C "$CLONE_DIR" fetch --prune origin >>"$log_path" 2>&1; then
     echo "fetch failed" >>"$log_path"
@@ -59,6 +82,25 @@ _checkout_sha() {
       echo "pr fetch failed ref=$pr_ref" >>"$log_path"
       return 1
     fi
+    base="$(_pr_base_branch)"
+    echo "pr merge onto origin/$base" >>"$log_path"
+    if ! git -C "$CLONE_DIR" rev-parse --verify "origin/$base" >/dev/null 2>&1; then
+      echo "pr base missing: origin/$base" >>"$log_path"
+      return 1
+    fi
+    if ! git -C "$CLONE_DIR" checkout --detach "origin/$base" >>"$log_path" 2>&1; then
+      echo "checkout base failed: origin/$base" >>"$log_path"
+      return 1
+    fi
+    # Allow merge commit when diverged; only conflicts (or other merge errors) fail.
+    if ! git -C "$CLONE_DIR" -c core.editor=true merge --no-edit \
+      -m "WatchCI: merge $sha into $base" "$sha" >>"$log_path" 2>&1; then
+      echo "merge failed (conflicts or error; resolve against $base)" >>"$log_path"
+      git -C "$CLONE_DIR" merge --abort >>"$log_path" 2>&1 || \
+        git -C "$CLONE_DIR" reset --hard "origin/$base" >>"$log_path" 2>&1 || true
+      return 1
+    fi
+    return 0
   fi
 
   if ! git -C "$CLONE_DIR" checkout --detach "$sha" >>"$log_path" 2>&1; then
@@ -98,7 +140,7 @@ run_event() {
     return 0
   fi
   # shellcheck disable=SC2064
-  trap "lock_release '$lockdir'" RETURN
+  trap "_clone_cleanup; lock_release '$lockdir'" RETURN
 
   ensure_clone
   local run_id start_epoch end_epoch exit_code status
