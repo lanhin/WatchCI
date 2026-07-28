@@ -14,7 +14,13 @@
   let liveOffset = 0;
   let liveFollowing = true;
 
-  const BOOL_KEYS = new Set(["WATCH_PRS", "AUTO_PUBLISH", "ADMIN_ENABLE", "ENABLED"]);
+  const BOOL_KEYS = new Set([
+    "WATCH_PRS",
+    "AUTO_PUBLISH",
+    "ADMIN_ENABLE",
+    "ENABLED",
+    "ALLOW_MANUAL_RERUN",
+  ]);
 
   const $ = (id) => document.getElementById(id);
   const msg = (id, text, err = false) => {
@@ -165,9 +171,115 @@
     renderLiveList(snap);
   };
 
+  const fmtFinished = (ts) => {
+    if (!ts) return "";
+    const d = new Date(Number(ts) * 1000);
+    if (Number.isNaN(d.getTime())) return String(ts);
+    return d.toLocaleString();
+  };
+
+  const fillRerunProjects = (projects) => {
+    const sel = $("rerun-project");
+    const cur = sel.value;
+    sel.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "全部项目";
+    sel.appendChild(all);
+    for (const p of projects || []) {
+      const name = p.NAME || p._file;
+      if (!name) continue;
+      const o = document.createElement("option");
+      o.value = name;
+      o.textContent = name;
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  };
+
+  const refreshRerun = async () => {
+    const project = $("rerun-project").value;
+    const q =
+      "/api/runs?limit=50" +
+      (project ? "&project=" + encodeURIComponent(project) : "");
+    const res = await fetch(q, { headers: headers() });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      msg(
+        "rerun-msg",
+        "加载失败列表失败 · HTTP " + res.status + (body.error ? " · " + body.error : "") +
+          (res.status === 404 ? "（若刚升级代码，请重启配置 UI）" : ""),
+        true
+      );
+      return;
+    }
+    const body = await res.json();
+    const runs = body.runs || [];
+    const ul = $("rerun-list");
+    ul.innerHTML = "";
+    $("rerun-empty").classList.toggle("hidden", runs.length > 0);
+    for (const r of runs) {
+      const li = document.createElement("li");
+      const main = document.createElement("div");
+      main.className = "rerun-main";
+      const title = document.createElement("span");
+      title.className = "rerun-title";
+      title.textContent = (r.project || "?") + " · " + (r.status || "");
+      const meta = document.createElement("span");
+      meta.className = "rerun-meta status-" + (r.status || "");
+      meta.textContent = [
+        r.kind,
+        r.pr_id ? "PR#" + r.pr_id : "",
+        r.ref,
+        shortSha(r.sha),
+        fmtFinished(r.finished),
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      main.appendChild(title);
+      main.appendChild(meta);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-ghost";
+      btn.textContent = "重跑";
+      btn.onclick = () => doRerun(r.id, btn);
+      li.appendChild(main);
+      li.appendChild(btn);
+      ul.appendChild(li);
+    }
+  };
+
+  const doRerun = async (runId, btn) => {
+    if (!runId) return;
+    if (btn) btn.disabled = true;
+    msg("rerun-msg", "入队中…");
+    try {
+      const res = await fetch("/api/runs/" + encodeURIComponent(runId) + "/rerun", {
+        method: "POST",
+        headers: headers(),
+        body: "{}",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        msg("rerun-msg", body.error || "重跑失败", true);
+        return;
+      }
+      if (body.skipped === "already_pending") {
+        msg("rerun-msg", "已在排队中，未重复入队");
+      } else {
+        msg("rerun-msg", "已入队 · " + (body.event_id || runId));
+      }
+      await refreshLive();
+      await refreshRerun();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
   const startLive = () => {
     stopLive();
     refreshLive().catch(() => {});
+    refreshRerun().catch(() => {});
     liveTimer = setInterval(() => refreshLive().catch(() => {}), 1500);
     liveTailTimer = setInterval(() => {
       if (liveSel && !$("live-status").classList.contains("done")) {
@@ -291,6 +403,7 @@
     fillForm($("form-global"), schema.global, data.global || {});
 
     const projects = data.projects || [];
+    fillRerunProjects(projects);
     const ul = $("project-list");
     ul.innerHTML = "";
     $("project-empty").classList.toggle("hidden", projects.length > 0);
@@ -359,7 +472,12 @@
   $("tab-live").onclick = () => setTab("live");
   $("tab-global").onclick = () => setTab("global");
   $("tab-projects").onclick = () => setTab("projects");
-  $("live-refresh").onclick = () => refreshLive().catch(() => {});
+  $("live-refresh").onclick = () => {
+    refreshLive().catch(() => {});
+    refreshRerun().catch(() => {});
+  };
+  $("rerun-refresh").onclick = () => refreshRerun().catch(() => {});
+  $("rerun-project").onchange = () => refreshRerun().catch(() => {});
   $("live-autoscroll").onchange = (e) => {
     liveFollowing = e.target.checked;
     if (liveFollowing) {
@@ -392,6 +510,7 @@
       ENABLED: "true",
       SCRIPT: "./scripts/ci.example.sh",
       TOKEN_ENV: "GITHUB_TOKEN",
+      ALLOW_MANUAL_RERUN: "true",
     };
     fillForm($("form-project"), schema.project, data);
     $("form-project").dataset.create = "1";

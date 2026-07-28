@@ -98,6 +98,7 @@ assert d["NAME"] == "smoke"
 assert "REPO_URL" in d
 assert "POLL_INTERVAL_SEC" not in [f["key"] for f in mod.PROJECT_SCHEMA]
 assert any(f["key"] == "POLL_INTERVAL_SEC" for f in mod.GLOBAL_SCHEMA)
+assert any(f["key"] == "ALLOW_MANUAL_RERUN" for f in mod.PROJECT_SCHEMA)
 out = mod.dump_conf({"NAME": "x", "ENABLED": "true"}, mod.PROJECT_SCHEMA)
 assert "项目名称" in out or "NAME=x" in out
 assert "# " in out
@@ -199,5 +200,89 @@ if echo "$out" | grep -q 'also-secret'; then
   echo "FAIL: access_token leaked"; echo "$out"; exit 1
 fi
 echo "provider_api_get 502 log ok"
+
+# Manual rerun: list / gate / enqueue / dedup (App against smoke TMP root)
+python3 - <<PY
+from pathlib import Path
+import json
+import importlib.util
+
+spec = importlib.util.spec_from_file_location("config_admin", "$ROOT/lib/config_admin.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+root = Path("$TMP")
+data = Path("$SMOKE_DATA")
+runs = data / "runs"
+runs.mkdir(parents=True, exist_ok=True)
+pending = data / "events" / "pending"
+if pending.is_dir():
+    for f in pending.glob("*.json"):
+        f.unlink()
+
+fail_id = "smoke-fail-rerun-1"
+sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+meta = {
+    "id": fail_id,
+    "project": "smoke",
+    "kind": "branch",
+    "ref": "main",
+    "pr_id": None,
+    "sha": sha,
+    "status": "failure",
+    "exit_code": 1,
+    "started": 1,
+    "finished": 2,
+    "duration": 1,
+    "log": "",
+}
+(runs / f"{fail_id}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+# success should not appear in default list
+ok_id = "smoke-ok-hide"
+(runs / f"{ok_id}.meta.json").write_text(
+    json.dumps({**meta, "id": ok_id, "status": "success", "exit_code": 0}),
+    encoding="utf-8",
+)
+
+app = mod.App(root, "", data / "watchci.pid")
+listed = app.list_runs()
+ids = {r["id"] for r in listed}
+assert fail_id in ids, listed
+assert ok_id not in ids, listed
+
+r1 = app.rerun_run(fail_id)
+assert r1.get("ok") and r1.get("event_id"), r1
+pend = list(pending.glob("*.json"))
+assert len(pend) == 1, pend
+ev = json.loads(pend[0].read_text(encoding="utf-8"))
+assert ev["sha"] == sha and ev["source"] == "manual" and ev["project"] == "smoke"
+
+r2 = app.rerun_run(fail_id)
+assert r2.get("skipped") == "already_pending", r2
+
+# gate: ALLOW_MANUAL_RERUN=false
+conf = Path("$TMP/config/projects/smoke.conf")
+text = conf.read_text(encoding="utf-8")
+if "ALLOW_MANUAL_RERUN=" in text:
+    conf.write_text(
+        "\n".join(
+            ("ALLOW_MANUAL_RERUN=false" if line.startswith("ALLOW_MANUAL_RERUN=") else line)
+            for line in text.splitlines()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+else:
+    conf.write_text(text.rstrip() + "\nALLOW_MANUAL_RERUN=false\n", encoding="utf-8")
+# clear pending so gate is what we hit (not dedup)
+for f in pending.glob("*.json"):
+    f.unlink()
+try:
+    app.rerun_run(fail_id)
+    raise SystemExit("FAIL: expected PermissionError when ALLOW_MANUAL_RERUN=false")
+except PermissionError:
+    pass
+print("manual rerun ok")
+PY
 
 echo "SMOKE OK"

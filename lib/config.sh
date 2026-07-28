@@ -101,7 +101,7 @@ load_project_file() {
   # Reset known keys so stale values don't leak between projects.
   NAME= PROVIDER= REPO_URL= API_BASE= OWNER= REPO= BRANCHES=
   WATCH_PRS=true PR_LABELS= SCRIPT= WORKDIR= TIMEOUT_SEC=
-  TOKEN_ENV= CLONE_DIR= ENABLED=true PROJECT_ID=
+  TOKEN_ENV= CLONE_DIR= ENABLED=true PROJECT_ID= ALLOW_MANUAL_RERUN=true
   # shellcheck disable=SC1090
   set -a
   # shellcheck source=/dev/null
@@ -112,6 +112,7 @@ load_project_file() {
   PROVIDER="${PROVIDER:-github}"
   WATCH_PRS="${WATCH_PRS:-true}"
   ENABLED="${ENABLED:-true}"
+  ALLOW_MANUAL_RERUN="${ALLOW_MANUAL_RERUN:-true}"
   TIMEOUT_SEC="${TIMEOUT_SEC:-$DEFAULT_TIMEOUT_SEC}"
   if [[ -z "${CLONE_DIR:-}" ]]; then
     CLONE_DIR="$DATA_DIR/clones/$NAME"
@@ -120,7 +121,7 @@ load_project_file() {
   fi
   export NAME PROVIDER REPO_URL API_BASE OWNER REPO BRANCHES WATCH_PRS PR_LABELS
   export SCRIPT WORKDIR TIMEOUT_SEC TOKEN_ENV CLONE_DIR ENABLED PROJECT_ID
-  export POLL_INTERVAL_SEC
+  export ALLOW_MANUAL_RERUN POLL_INTERVAL_SEC
 }
 
 validate_project() {

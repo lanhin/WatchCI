@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Daemon loop: poll → drain → sleep; SIGHUP / reload.request reloads config.
+# Daemon loop: poll → drain → sleep; pending / SIGHUP / reload.request wake early.
 
 WATCHCI_RELOAD=0
 WATCHCI_STOP=0
@@ -145,10 +145,12 @@ daemon_loop() {
     daemon_tick || warn "tick error"
     _maybe_reload
     local i=0
+    # ponytail: 1s slices; pending (rerun/webhook) or reload wakes without waiting full interval
     while [[ "$i" -lt "$POLL_INTERVAL_SEC" && "$WATCHCI_STOP" -eq 0 && "$WATCHCI_RELOAD" -eq 0 ]]; do
       sleep 1
       i=$((i + 1))
       [[ -f "$DATA_DIR/reload.request" ]] && WATCHCI_RELOAD=1
+      [[ -n "$(events_list_pending | head -1)" ]] && break
     done
   done
   info "daemon stopping"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import signal
 import tempfile
@@ -15,7 +16,10 @@ from urllib.parse import parse_qs, urlparse
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOG_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.log$")
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 FINISHED_MARK = "=== finished "
+RERUN_STATUSES = frozenset({"failure", "timeout"})
+
 
 # group id (internal) -> Chinese label for UI
 GROUP_LABELS = {
@@ -199,6 +203,12 @@ PROJECT_SCHEMA = [
         "key": "TIMEOUT_SEC",
         "label": "超时（秒）",
         "help": "空则用全局默认超时。",
+        "group": "run",
+    },
+    {
+        "key": "ALLOW_MANUAL_RERUN",
+        "label": "允许手动重跑失败",
+        "help": "本机台是否可对失败/超时的 run 一键重跑（同 SHA 再入队）。",
         "group": "run",
     },
     {
@@ -495,6 +505,129 @@ class App:
             "done": self._log_finished(path),
         }
 
+    def _read_run_meta(self, run_id: str) -> dict:
+        if not RUN_ID_RE.match(run_id):
+            raise ValueError("无效的 run id")
+        path = self.data_dir() / "runs" / f"{run_id}.meta.json"
+        if not path.is_file():
+            raise FileNotFoundError("run 不存在")
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError("run meta 无效") from e
+
+    def list_runs(
+        self,
+        project: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> list[dict]:
+        runs_dir = self.data_dir() / "runs"
+        if not runs_dir.is_dir():
+            return []
+        want_status = {status} if status else set(RERUN_STATUSES)
+        out: list[dict] = []
+        for path in runs_dir.glob("*.meta.json"):
+            try:
+                meta = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            st = str(meta.get("status") or "")
+            if st not in want_status:
+                continue
+            if project and str(meta.get("project") or "") != project:
+                continue
+            out.append(
+                {
+                    "id": meta.get("id") or path.name.removesuffix(".meta.json"),
+                    "project": meta.get("project") or "",
+                    "kind": meta.get("kind") or "",
+                    "ref": meta.get("ref") or "",
+                    "pr_id": meta.get("pr_id"),
+                    "sha": meta.get("sha") or "",
+                    "status": st,
+                    "exit_code": meta.get("exit_code"),
+                    "started": meta.get("started"),
+                    "finished": meta.get("finished"),
+                    "duration": meta.get("duration"),
+                }
+            )
+        out.sort(key=lambda r: int(r.get("finished") or 0), reverse=True)
+        if limit < 1:
+            limit = 50
+        return out[:limit]
+
+    def _pending_has_dup(self, pending_dir: Path, project: str, kind: str, ref: str, sha: str) -> bool:
+        if not pending_dir.is_dir():
+            return False
+        for f in pending_dir.glob("*.json"):
+            try:
+                ev = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                ev.get("project") == project
+                and ev.get("kind") == kind
+                and ev.get("ref") == ref
+                and ev.get("sha") == sha
+            ):
+                return True
+        return False
+
+    def enqueue_manual(
+        self,
+        project: str,
+        kind: str,
+        ref: str,
+        sha: str,
+        pr_id: str | None = None,
+    ) -> dict:
+        """Mirror bash event_enqueue; source=manual. Returns event_id or skipped."""
+        pending_dir = self.data_dir() / "events" / "pending"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        if self._pending_has_dup(pending_dir, project, kind, ref, sha):
+            return {"ok": True, "skipped": "already_pending"}
+        event_id = f"{int(time.time())}-{os.getpid()}-{random.randint(0, 32767)}"
+        payload = {
+            "project": project,
+            "kind": kind,
+            "ref": ref,
+            "pr_id": pr_id if pr_id else None,
+            "sha": sha,
+            "source": "manual",
+            "ts": int(time.time()),
+        }
+        atomic_write(pending_dir / f"{event_id}.json", json.dumps(payload, ensure_ascii=False) + "\n")
+        return {"ok": True, "event_id": event_id}
+
+    def rerun_run(self, run_id: str) -> dict:
+        meta = self._read_run_meta(run_id)
+        status = str(meta.get("status") or "")
+        if status not in RERUN_STATUSES:
+            raise ValueError("仅 failure / timeout 可重跑")
+        project = str(meta.get("project") or "")
+        if not project:
+            raise ValueError("run 缺少 project")
+        proj = self.read_project(project)
+        if not proj:
+            raise ValueError(f"找不到项目配置: {project}")
+        allow = str(proj.get("ALLOW_MANUAL_RERUN", "true")).lower()
+        if allow not in ("true", "1", "yes"):
+            raise PermissionError("项目已关闭手动重跑（ALLOW_MANUAL_RERUN）")
+        kind = str(meta.get("kind") or "branch")
+        ref = str(meta.get("ref") or "")
+        sha = str(meta.get("sha") or "")
+        if not sha:
+            raise ValueError("run 缺少 sha")
+        pr_id = meta.get("pr_id")
+        if pr_id is None or pr_id == "":
+            pr_s = None
+        else:
+            pr_s = str(pr_id)
+        result = self.enqueue_manual(project, kind, ref, sha, pr_s)
+        result["run_id"] = run_id
+        return result
+
 
 def make_handler(app: App, token: str, bind: str):
     class Handler(BaseHTTPRequestHandler):
@@ -576,6 +709,25 @@ def make_handler(app: App, token: str, bind: str):
             if path == "/api/live":
                 self._json(200, app.live_snapshot())
                 return
+            if path == "/api/runs":
+                try:
+                    limit = int((qs.get("limit") or ["50"])[0])
+                except ValueError:
+                    self._json(400, {"error": "limit 无效"})
+                    return
+                project = (qs.get("project") or [""])[0]
+                status = (qs.get("status") or [""])[0]
+                self._json(
+                    200,
+                    {
+                        "runs": app.list_runs(
+                            project=project,
+                            status=status,
+                            limit=limit,
+                        )
+                    },
+                )
+                return
             if path == "/api/live/tail":
                 project = (qs.get("project") or [""])[0]
                 name = (qs.get("file") or [""])[0]
@@ -633,7 +785,19 @@ def make_handler(app: App, token: str, bind: str):
             if not self._check_auth():
                 return
             parsed = urlparse(self.path)
-            if parsed.path != "/api/projects":
+            path = parsed.path
+            if path.startswith("/api/runs/") and path.endswith("/rerun"):
+                run_id = path[len("/api/runs/") : -len("/rerun")].strip("/")
+                try:
+                    self._json(200, app.rerun_run(run_id))
+                except FileNotFoundError as e:
+                    self._json(404, {"error": str(e)})
+                except PermissionError as e:
+                    self._json(403, {"error": str(e)})
+                except ValueError as e:
+                    self._json(400, {"error": str(e)})
+                return
+            if path != "/api/projects":
                 self._json(404, {"error": "未找到"})
                 return
             try:

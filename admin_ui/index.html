@@ -71,6 +71,23 @@
         </div>
       </div>
     </div>
+    <section class="rerun-panel" aria-label="可重跑的失败">
+      <div class="rail-head">
+        <h2>可重跑</h2>
+        <div class="rerun-tools">
+          <label class="rerun-filter">
+            <span class="visually-hidden">按项目筛选</span>
+            <select id="rerun-project" title="按项目筛选">
+              <option value="">全部项目</option>
+            </select>
+          </label>
+          <button type="button" id="rerun-refresh" class="btn btn-ghost" title="刷新失败列表">刷新</button>
+        </div>
+      </div>
+      <p id="rerun-msg" class="msg" role="status"></p>
+      <ul id="rerun-list"></ul>
+      <p id="rerun-empty" class="empty">没有可重跑的失败/超时记录。</p>
+    </section>
   </section>
 
   <section id="view-global" class="panel hidden" role="tabpanel" aria-labelledby="tab-global">
