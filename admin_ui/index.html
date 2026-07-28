@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>WatchCI 配置</title>
+<title>WatchCI</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet"/>
@@ -14,22 +15,65 @@
 
 <header class="top">
   <div class="brand">
-    <span class="pulse" aria-hidden="true"><span class="pulse-ring"></span><span class="pulse-dot"></span></span>
+    <span class="brand-mark" aria-hidden="true">
+      <img src="icon.svg" alt="" width="36" height="36"/>
+      <span class="pulse-ring"></span>
+    </span>
     <div class="brand-text">
       <h1>WatchCI</h1>
-      <p>本机配置台 · 写入 <code>config/*.conf</code></p>
+      <p>本机台 · 配置与执行现场</p>
     </div>
   </div>
   <p class="top-note">默认仅本机访问 · 保存后请求守护进程重载</p>
 </header>
 
-<nav class="tabs" role="tablist" aria-label="配置分区">
-  <button type="button" role="tab" id="tab-global" class="active" aria-selected="true" aria-controls="view-global">全局</button>
+<nav class="tabs" role="tablist" aria-label="本机台分区">
+  <button type="button" role="tab" id="tab-live" class="active" aria-selected="true" aria-controls="view-live">现场</button>
+  <button type="button" role="tab" id="tab-global" aria-selected="false" aria-controls="view-global">全局</button>
   <button type="button" role="tab" id="tab-projects" aria-selected="false" aria-controls="view-projects">项目</button>
 </nav>
 
 <main id="main">
-  <section id="view-global" class="panel" role="tabpanel" aria-labelledby="tab-global">
+  <section id="view-live" class="panel live-panel" role="tabpanel" aria-labelledby="tab-live">
+    <div class="live-strip" aria-live="polite">
+      <span class="live-pill" id="live-daemon"><span class="dot" aria-hidden="true"></span><span class="live-pill-text">守护进程 · —</span></span>
+      <span class="live-stat">排队 <strong id="live-pending">0</strong></span>
+      <span class="live-stat">在跑 <strong id="live-active-n">0</strong></span>
+      <span class="live-hint">边跑边刷日志 · 不是结果看板</span>
+    </div>
+    <div class="live-layout">
+      <aside class="live-rail" aria-label="进行中的运行">
+        <div class="rail-head">
+          <h2>进行中</h2>
+          <button type="button" id="live-refresh" class="btn btn-ghost" title="立即刷新">刷新</button>
+        </div>
+        <ul id="live-list"></ul>
+        <p id="live-empty" class="empty">当前没有在跑的 CI。有事件入队或脚本启动后会出现在这里。</p>
+      </aside>
+      <div class="live-stage">
+        <div id="live-idle" class="live-idle">
+          <p class="live-idle-title">等待下一场</p>
+          <p>选中左侧进行中的 run，日志会实时跟进。跑完后自动停刷。</p>
+        </div>
+        <div id="live-work" class="hidden">
+          <div class="live-meta">
+            <div>
+              <h2 id="live-title">—</h2>
+              <p id="live-sub" class="live-sub">—</p>
+            </div>
+            <label class="live-follow">
+              <input type="checkbox" id="live-autoscroll" checked/>
+              跟随底部
+            </label>
+          </div>
+          <pre id="live-log" class="live-log" aria-label="运行日志"></pre>
+          <p id="live-status" class="live-status" role="status"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-global" class="panel hidden" role="tabpanel" aria-labelledby="tab-global">
     <div class="panel-head">
       <h2>全局配置</h2>
       <p>轮询节奏、看板发布与本机管理入口</p>
@@ -71,6 +115,26 @@
     </div>
   </section>
 </main>
+
+<dialog id="dlg-new-project" class="modal">
+  <form id="form-new-project">
+    <header class="modal-head">
+      <h2>新建项目</h2>
+      <p>名称会写成 <code>config/projects/&lt;名称&gt;.conf</code></p>
+    </header>
+    <label class="modal-field">
+      <span class="field-label">项目名称</span>
+      <span class="field-key">NAME</span>
+      <span class="field-help">仅字母、数字、下划线、短横线</span>
+      <input id="new-project-name" name="name" type="text" autocomplete="off" spellcheck="false" placeholder="my-repo" required pattern="[A-Za-z0-9_-]+" maxlength="64"/>
+    </label>
+    <p id="new-project-err" class="msg err" role="alert"></p>
+    <div class="modal-actions">
+      <button type="button" id="new-project-cancel" class="btn">取消</button>
+      <button type="submit" class="btn btn-primary">继续</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="app.js"></script>
 </body>

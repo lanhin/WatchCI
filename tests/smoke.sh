@@ -103,6 +103,21 @@ assert "项目名称" in out or "NAME=x" in out
 assert "# " in out
 print("config parse ok")
 
+# Live floor: unfinished log detection (used by /api/live)
+_logs = Path("$SMOKE_DATA/logs/smoke")
+_logs.mkdir(parents=True, exist_ok=True)
+_live = _logs / "999-test-deadbeef.log"
+_live.write_text("=== WatchCI run ===\nrunning...\n", encoding="utf-8")
+_app = mod.App(Path("$ROOT"), "", Path("$SMOKE_DATA/watchci.pid"))
+assert not _app._log_finished(_live)
+_live.write_text(_live.read_text(encoding="utf-8") + "=== finished status=success exit=0 ===\n", encoding="utf-8")
+assert _app._log_finished(_live)
+try:
+    _app.tail_run_log("bad/name", "x.log", 0)
+    raise SystemExit("FAIL: path reject")
+except ValueError:
+    pass
+print("live log detect ok")
 PY
 
 # Stale project POLL_INTERVAL_SEC must not clobber global interval

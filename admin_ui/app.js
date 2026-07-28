@@ -8,6 +8,11 @@
 
   let schema = { global: [], project: [], groups: {} };
   let currentProject = null;
+  let liveTimer = null;
+  let liveTailTimer = null;
+  let liveSel = null; // {project, file}
+  let liveOffset = 0;
+  let liveFollowing = true;
 
   const BOOL_KEYS = new Set(["WATCH_PRS", "AUTO_PUBLISH", "ADMIN_ENABLE", "ENABLED"]);
 
@@ -19,13 +24,156 @@
   };
 
   const setTab = (which) => {
-    const global = which === "global";
-    $("tab-global").classList.toggle("active", global);
-    $("tab-projects").classList.toggle("active", !global);
-    $("tab-global").setAttribute("aria-selected", String(global));
-    $("tab-projects").setAttribute("aria-selected", String(!global));
-    $("view-global").classList.toggle("hidden", !global);
-    $("view-projects").classList.toggle("hidden", global);
+    const tabs = ["live", "global", "projects"];
+    for (const t of tabs) {
+      const on = which === t;
+      const btn = $("tab-" + t);
+      const view = $("view-" + t);
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", String(on));
+      view.classList.toggle("hidden", !on);
+    }
+    if (which === "live") startLive();
+    else stopLive();
+  };
+
+  const stopLive = () => {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+    if (liveTailTimer) {
+      clearInterval(liveTailTimer);
+      liveTailTimer = null;
+    }
+  };
+
+  const shortSha = (s) => (s && s.length > 8 ? s.slice(0, 8) : s || "");
+
+  const selectLive = (item) => {
+    liveSel = item ? { project: item.project, file: item.file } : null;
+    liveOffset = 0;
+    $("live-log").textContent = "";
+    const work = !!liveSel;
+    $("live-idle").classList.toggle("hidden", work);
+    $("live-work").classList.toggle("hidden", !work);
+    if (!work) return;
+    $("live-title").textContent = item.project + " · " + (item.run_id || item.file);
+    const bits = [item.kind, item.ref, shortSha(item.sha)].filter(Boolean);
+    $("live-sub").textContent = bits.join(" · ") || item.file;
+    $("live-status").textContent = "跟进中…";
+    $("live-status").classList.remove("done");
+    for (const li of $("live-list").children) {
+      li.classList.toggle(
+        "active",
+        li.dataset.project === item.project && li.dataset.file === item.file
+      );
+    }
+    pullTail();
+  };
+
+  const pullTail = async () => {
+    if (!liveSel) return;
+    const q =
+      "/api/live/tail?project=" +
+      encodeURIComponent(liveSel.project) +
+      "&file=" +
+      encodeURIComponent(liveSel.file) +
+      "&offset=" +
+      liveOffset;
+    const res = await fetch(q, { headers: headers() });
+    if (!res.ok) {
+      $("live-status").textContent = "读取日志失败";
+      return;
+    }
+    const body = await res.json();
+    if (body.text) {
+      const pre = $("live-log");
+      pre.textContent += body.text;
+      if (liveFollowing || $("live-autoscroll").checked) {
+        pre.scrollTop = pre.scrollHeight;
+      }
+    }
+    liveOffset = body.next_offset;
+    if (body.done) {
+      $("live-status").textContent = "已结束 · 完整日志仍可在此查看，结果见静态看板";
+      $("live-status").classList.add("done");
+    } else {
+      $("live-status").textContent = "跟进中 · " + body.size + " bytes";
+      $("live-status").classList.remove("done");
+    }
+  };
+
+  const renderLiveList = (snap) => {
+    const ul = $("live-list");
+    const active = snap.active || [];
+    $("live-empty").classList.toggle("hidden", active.length > 0);
+    ul.innerHTML = "";
+    for (const item of active) {
+      const li = document.createElement("li");
+      li.dataset.project = item.project;
+      li.dataset.file = item.file;
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+      if (liveSel && liveSel.project === item.project && liveSel.file === item.file) {
+        li.classList.add("active");
+      }
+      const nm = document.createElement("span");
+      nm.className = "proj-name";
+      nm.textContent = item.project;
+      const meta = document.createElement("span");
+      meta.className = "proj-meta";
+      meta.textContent = [item.kind || "run", item.ref || "", shortSha(item.sha)]
+        .filter(Boolean)
+        .join(" · ");
+      li.appendChild(nm);
+      li.appendChild(meta);
+      li.onclick = () => selectLive(item);
+      li.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          selectLive(item);
+        }
+      };
+      ul.appendChild(li);
+    }
+    if (liveSel) {
+      const still = active.some((a) => a.project === liveSel.project && a.file === liveSel.file);
+      if (!still && active.length) {
+        // keep selection so user can read finished log; status updated by tail
+      } else if (!still && !active.length && !$("live-work").classList.contains("hidden")) {
+        // leave finished view until user clears / new run
+      } else if (!liveSel && active.length) {
+        selectLive(active[0]);
+      }
+    } else if (active.length === 1) {
+      selectLive(active[0]);
+    }
+  };
+
+  const refreshLive = async () => {
+    const res = await fetch("/api/live", { headers: headers() });
+    if (!res.ok) return;
+    const snap = await res.json();
+    const daemonEl = $("live-daemon");
+    daemonEl.classList.toggle("on", snap.daemon === "running");
+    daemonEl.classList.toggle("off", snap.daemon !== "running");
+    daemonEl.querySelector(".live-pill-text").textContent =
+      "守护进程 · " + (snap.daemon === "running" ? "运行中" : "未启动");
+    $("live-pending").textContent = String(snap.pending || 0);
+    $("live-active-n").textContent = String((snap.active || []).length);
+    renderLiveList(snap);
+  };
+
+  const startLive = () => {
+    stopLive();
+    refreshLive().catch(() => {});
+    liveTimer = setInterval(() => refreshLive().catch(() => {}), 1500);
+    liveTailTimer = setInterval(() => {
+      if (liveSel && !$("live-status").classList.contains("done")) {
+        pullTail().catch(() => {});
+      }
+    }, 800);
   };
 
   const showProjectEditor = (show) => {
@@ -208,8 +356,17 @@
     msg("project-msg", "");
   };
 
+  $("tab-live").onclick = () => setTab("live");
   $("tab-global").onclick = () => setTab("global");
   $("tab-projects").onclick = () => setTab("projects");
+  $("live-refresh").onclick = () => refreshLive().catch(() => {});
+  $("live-autoscroll").onchange = (e) => {
+    liveFollowing = e.target.checked;
+    if (liveFollowing) {
+      const pre = $("live-log");
+      pre.scrollTop = pre.scrollHeight;
+    }
+  };
 
   $("save-global").onclick = async () => {
     const res = await fetch("/api/global", {
@@ -221,9 +378,11 @@
     msg("global-msg", res.ok ? "已保存并请求守护进程重载" : body.error || "失败", !res.ok);
   };
 
-  $("new-project").onclick = () => {
-    const name = prompt("项目名称（字母数字、下划线、短横线）");
-    if (!name) return;
+  const NAME_RE = /^[A-Za-z0-9_-]+$/;
+  const dlg = $("dlg-new-project");
+  const nameInput = $("new-project-name");
+
+  const startCreate = (name) => {
     currentProject = name;
     const data = {
       NAME: name,
@@ -242,6 +401,36 @@
     markActive(null);
     setTab("projects");
     msg("project-msg", "尚未保存");
+  };
+
+  $("new-project").onclick = () => {
+    nameInput.value = "";
+    msg("new-project-err", "");
+    dlg.showModal();
+    nameInput.focus();
+  };
+
+  $("new-project-cancel").onclick = () => dlg.close();
+
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) dlg.close();
+  });
+
+  $("form-new-project").onsubmit = (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) {
+      msg("new-project-err", "请填写项目名称", true);
+      nameInput.focus();
+      return;
+    }
+    if (!NAME_RE.test(name)) {
+      msg("new-project-err", "仅字母数字、下划线、短横线", true);
+      nameInput.focus();
+      return;
+    }
+    dlg.close();
+    startCreate(name);
   };
 
   $("save-project").onclick = async () => {
@@ -289,4 +478,5 @@
   };
 
   load().catch((e) => msg("global-msg", String(e), true));
+  startLive();
 })();

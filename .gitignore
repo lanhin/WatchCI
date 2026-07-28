@@ -1,12 +1,6 @@
-data/clones/
-data/state/
-data/events/
-data/logs/
-data/runs/
-data/site/
-data/smoke-tmp/
-data/*.pid
-data/*.log
+# Runtime DATA_DIR (clones, events, logs, runs, site, pids, …)
+data/
+
 config/watchci.conf
 config/projects/*.conf
 !config/projects/example.conf

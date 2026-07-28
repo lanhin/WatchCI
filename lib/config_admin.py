@@ -8,11 +8,14 @@ import os
 import re
 import signal
 import tempfile
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+LOG_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.log$")
+FINISHED_MARK = "=== finished "
 
 # group id (internal) -> Chinese label for UI
 GROUP_LABELS = {
@@ -348,13 +351,19 @@ class App:
         path.unlink()
         self.request_reload(self.read_global())
 
-    def request_reload(self, global_cfg: dict[str, str] | None = None) -> None:
+    def data_dir(self, global_cfg: dict[str, str] | None = None) -> Path:
         cfg = global_cfg or self.read_global()
         data_dir = cfg.get("DATA_DIR") or str(self.root / "data")
-        if not data_dir.startswith("/"):
-            data_dir = str(self.root / data_dir)
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-        (Path(data_dir) / "reload.request").write_text(str(int(__import__("time").time())), encoding="utf-8")
+        p = Path(data_dir)
+        if not p.is_absolute():
+            p = self.root / p
+        return p.resolve()
+
+    def request_reload(self, global_cfg: dict[str, str] | None = None) -> None:
+        cfg = global_cfg or self.read_global()
+        data_dir = self.data_dir(cfg)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "reload.request").write_text(str(int(time.time())), encoding="utf-8")
         pid_file = Path(cfg.get("PID_FILE") or self.daemon_pid_file)
         if not str(pid_file).startswith("/"):
             pid_file = self.root / pid_file
@@ -364,6 +373,127 @@ class App:
                 os.kill(pid, signal.SIGHUP)
         except (OSError, ValueError):
             pass
+
+    def daemon_running(self, global_cfg: dict[str, str] | None = None) -> bool:
+        cfg = global_cfg or self.read_global()
+        pid_file = Path(cfg.get("PID_FILE") or self.daemon_pid_file)
+        if not pid_file.is_absolute():
+            pid_file = self.root / pid_file
+        try:
+            if not pid_file.is_file():
+                return False
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _log_finished(self, path: Path) -> bool:
+        # ponytail: scan last 4KiB for finish marker; upgrade to meta-only if runner writes early
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                if size > 4096:
+                    f.seek(size - 4096)
+                tail = f.read().decode("utf-8", errors="replace")
+            return FINISHED_MARK in tail
+        except OSError:
+            return True
+
+    def _parse_log_header(self, path: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f):
+                    if i > 12:
+                        break
+                    s = line.strip()
+                    if s.startswith("project=") and " kind=" in s:
+                        for part in s.split():
+                            if "=" in part:
+                                k, v = part.split("=", 1)
+                                out[k] = v
+                    elif s.startswith("started="):
+                        out["started"] = s.split("=", 1)[1]
+        except OSError:
+            pass
+        return out
+
+    def live_snapshot(self) -> dict:
+        cfg = self.read_global()
+        data = self.data_dir(cfg)
+        pending_dir = data / "events" / "pending"
+        pending = sorted(p.name for p in pending_dir.glob("*.json")) if pending_dir.is_dir() else []
+        active = []
+        logs_root = data / "logs"
+        if logs_root.is_dir():
+            for proj_dir in sorted(logs_root.iterdir()):
+                if not proj_dir.is_dir() or not NAME_RE.match(proj_dir.name):
+                    continue
+                for log in sorted(proj_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if not LOG_NAME_RE.match(log.name):
+                        continue
+                    if self._log_finished(log):
+                        continue
+                    run_id = log.stem.rsplit("-", 1)[0] if "-" in log.stem else log.stem
+                    st = log.stat()
+                    hdr = self._parse_log_header(log)
+                    active.append(
+                        {
+                            "project": proj_dir.name,
+                            "file": log.name,
+                            "run_id": run_id,
+                            "size": st.st_size,
+                            "mtime": int(st.st_mtime),
+                            "kind": hdr.get("kind", ""),
+                            "ref": hdr.get("ref", ""),
+                            "sha": hdr.get("sha", ""),
+                            "started": hdr.get("started", ""),
+                        }
+                    )
+        active.sort(key=lambda r: r["mtime"], reverse=True)
+        locks = []
+        state_dir = data / "state"
+        if state_dir.is_dir():
+            for d in sorted(state_dir.glob("*.lockdir")):
+                if d.is_dir():
+                    locks.append(d.name[: -len(".lockdir")])
+        return {
+            "daemon": "running" if self.daemon_running(cfg) else "stopped",
+            "pending": len(pending),
+            "pending_ids": pending[:20],
+            "locks": locks,
+            "active": active,
+            "ts": int(time.time()),
+        }
+
+    def tail_run_log(self, project: str, name: str, offset: int) -> dict:
+        if not NAME_RE.match(project) or not LOG_NAME_RE.match(name):
+            raise ValueError("无效的日志路径")
+        path = (self.data_dir() / "logs" / project / name).resolve()
+        logs_root = (self.data_dir() / "logs").resolve()
+        if not str(path).startswith(str(logs_root) + os.sep):
+            raise ValueError("无效的日志路径")
+        if not path.is_file():
+            raise FileNotFoundError("日志不存在")
+        size = path.stat().st_size
+        if offset < 0:
+            offset = 0
+        if offset > size:
+            offset = size
+        with path.open("rb") as f:
+            f.seek(offset)
+            chunk = f.read(256 * 1024)
+        text = chunk.decode("utf-8", errors="replace")
+        return {
+            "project": project,
+            "file": name,
+            "offset": offset,
+            "next_offset": offset + len(chunk),
+            "size": size,
+            "text": text,
+            "done": self._log_finished(path),
+        }
 
 
 def make_handler(app: App, token: str, bind: str):
@@ -415,6 +545,8 @@ def make_handler(app: App, token: str, bind: str):
                 ctype = "application/javascript; charset=utf-8"
             elif path.suffix == ".css":
                 ctype = "text/css; charset=utf-8"
+            elif path.suffix == ".svg":
+                ctype = "image/svg+xml"
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -426,6 +558,7 @@ def make_handler(app: App, token: str, bind: str):
                 return
             parsed = urlparse(self.path)
             path = parsed.path
+            qs = parse_qs(parsed.query)
             if path == "/api/config":
                 self._json(
                     200,
@@ -439,6 +572,24 @@ def make_handler(app: App, token: str, bind: str):
                         },
                     },
                 )
+                return
+            if path == "/api/live":
+                self._json(200, app.live_snapshot())
+                return
+            if path == "/api/live/tail":
+                project = (qs.get("project") or [""])[0]
+                name = (qs.get("file") or [""])[0]
+                try:
+                    offset = int((qs.get("offset") or ["0"])[0])
+                except ValueError:
+                    self._json(400, {"error": "offset 无效"})
+                    return
+                try:
+                    self._json(200, app.tail_run_log(project, name, offset))
+                except ValueError as e:
+                    self._json(400, {"error": str(e)})
+                except FileNotFoundError as e:
+                    self._json(404, {"error": str(e)})
                 return
             if path.startswith("/api/projects/"):
                 name = path[len("/api/projects/") :].strip("/")
