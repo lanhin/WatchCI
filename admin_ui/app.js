@@ -269,6 +269,11 @@
       } else {
         msg("rerun-msg", "已入队 · " + (body.event_id || runId));
       }
+      // drop row immediately; server also deletes matching failure metas
+      if (btn && btn.closest) {
+        const li = btn.closest("li");
+        if (li) li.remove();
+      }
       await refreshLive();
       await refreshRerun();
     } finally {

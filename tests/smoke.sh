@@ -256,9 +256,23 @@ pend = list(pending.glob("*.json"))
 assert len(pend) == 1, pend
 ev = json.loads(pend[0].read_text(encoding="utf-8"))
 assert ev["sha"] == sha and ev["source"] == "manual" and ev["project"] == "smoke"
+# failure record removed after enqueue — no repeated rerun from the same meta
+assert not (runs / f"{fail_id}.meta.json").is_file()
+assert fail_id not in {r["id"] for r in app.list_runs()}
 
-r2 = app.rerun_run(fail_id)
+# dedup + clear siblings: same sha pending; extras for same checkout also deleted
+fail_id2 = "smoke-fail-rerun-2"
+fail_id2b = "smoke-fail-rerun-2b"
+(runs / f"{fail_id2}.meta.json").write_text(
+    json.dumps({**meta, "id": fail_id2}), encoding="utf-8"
+)
+(runs / f"{fail_id2b}.meta.json").write_text(
+    json.dumps({**meta, "id": fail_id2b}), encoding="utf-8"
+)
+r2 = app.rerun_run(fail_id2)
 assert r2.get("skipped") == "already_pending", r2
+assert not (runs / f"{fail_id2}.meta.json").is_file()
+assert not (runs / f"{fail_id2b}.meta.json").is_file()
 
 # gate: ALLOW_MANUAL_RERUN=false
 conf = Path("$TMP/config/projects/smoke.conf")
@@ -277,11 +291,16 @@ else:
 # clear pending so gate is what we hit (not dedup)
 for f in pending.glob("*.json"):
     f.unlink()
+fail_id3 = "smoke-fail-rerun-3"
+(runs / f"{fail_id3}.meta.json").write_text(
+    json.dumps({**meta, "id": fail_id3}), encoding="utf-8"
+)
 try:
-    app.rerun_run(fail_id)
+    app.rerun_run(fail_id3)
     raise SystemExit("FAIL: expected PermissionError when ALLOW_MANUAL_RERUN=false")
 except PermissionError:
     pass
+assert (runs / f"{fail_id3}.meta.json").is_file(), "gate fail must keep record"
 print("manual rerun ok")
 PY
 

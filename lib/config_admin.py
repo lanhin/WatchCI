@@ -516,6 +516,50 @@ class App:
         except json.JSONDecodeError as e:
             raise ValueError("run meta 无效") from e
 
+    def _delete_run_files(self, run_id: str, meta: dict) -> None:
+        meta_path = self.data_dir() / "runs" / f"{run_id}.meta.json"
+        try:
+            meta_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        log = Path(str(meta.get("log") or ""))
+        if log.is_file():
+            try:
+                log.unlink()
+            except OSError:
+                pass
+
+    def _delete_matching_failures(self, meta: dict) -> None:
+        """Drop this failure and duplicates for the same checkout (leaves rerun list)."""
+        project = str(meta.get("project") or "")
+        kind = str(meta.get("kind") or "")
+        ref = str(meta.get("ref") or "")
+        sha = str(meta.get("sha") or "")
+        pr_key = "" if meta.get("pr_id") in (None, "") else str(meta.get("pr_id"))
+        runs_dir = self.data_dir() / "runs"
+        if not runs_dir.is_dir() or not project or not sha:
+            return
+        for path in list(runs_dir.glob("*.meta.json")):
+            try:
+                m = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(m.get("status") or "") not in RERUN_STATUSES:
+                continue
+            if str(m.get("project") or "") != project:
+                continue
+            if str(m.get("kind") or "") != kind:
+                continue
+            if str(m.get("ref") or "") != ref:
+                continue
+            if str(m.get("sha") or "") != sha:
+                continue
+            m_pr = "" if m.get("pr_id") in (None, "") else str(m.get("pr_id"))
+            if m_pr != pr_key:
+                continue
+            rid = str(m.get("id") or path.name.removesuffix(".meta.json"))
+            self._delete_run_files(rid, m)
+
     def list_runs(
         self,
         project: str = "",
@@ -626,6 +670,8 @@ class App:
             pr_s = str(pr_id)
         result = self.enqueue_manual(project, kind, ref, sha, pr_s)
         result["run_id"] = run_id
+        # ponytail: clear all matching failures (not only the clicked id)
+        self._delete_matching_failures(meta)
         return result
 
 
