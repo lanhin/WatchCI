@@ -19,7 +19,7 @@ provider_list_open_prs() {
     if [[ -n "$tok" ]]; then
       url="${url}&access_token=${tok}"
     fi
-    json="$(curl -fsSL "$url")" || return 1
+    json="$(provider_api_get "$url")" || return 1
     local count
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -eq 0 ]] && break
@@ -39,5 +39,5 @@ provider_pr_head_sha() {
   tok="$(provider_token)"
   url="${base}/repos/${owner}/${repo}/pulls/${id}"
   [[ -n "$tok" ]] && url="${url}?access_token=${tok}"
-  curl -fsSL "$url" | jq -r '.head.sha'
+  provider_api_get "$url" | jq -r '.head.sha'
 }

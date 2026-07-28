@@ -23,8 +23,34 @@ provider_token() {
   printenv "$env_name" || true
 }
 
+# Redact secrets for log lines (Bearer / PRIVATE-TOKEN / access_token=).
+_provider_curl_cmd_redacted() {
+  local a s=""
+  for a in "$@"; do
+    case "$a" in
+      Authorization:*[Bb]earer*) a="Authorization: Bearer ***" ;;
+      PRIVATE-TOKEN:*) a="PRIVATE-TOKEN: ***" ;;
+      *access_token=*)
+        a="$(printf '%s' "$a" | sed -E 's/access_token=[^&"]+/access_token=***/g')"
+        ;;
+    esac
+    s+=" $(printf '%q' "$a")"
+  done
+  echo "curl -fsSL${s}"
+}
+
+# GET with -fsSL. On HTTP 502, warn with redacted command line.
 provider_api_get() {
-  local url="$1"
-  shift
-  curl -fsSL "$@" "$url"
+  local err ec=0
+  exec 3>&1
+  err="$(curl -fsSL "$@" 2>&1 1>&3)" || ec=$?
+  exec 3>&-
+  if [[ "$ec" -ne 0 ]]; then
+    [[ -n "$err" ]] && echo "$err" >&2
+    if [[ "$err" == *'returned error: 502'* ]]; then
+      warn "curl 502 command: $(_provider_curl_cmd_redacted "$@")"
+    fi
+    return "$ec"
+  fi
+  return 0
 }

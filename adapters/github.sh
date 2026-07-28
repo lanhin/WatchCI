@@ -25,7 +25,7 @@ provider_list_open_prs() {
   page=1
   while true; do
     # shellcheck disable=SC2046
-    json="$(curl -fsSL $(provider_auth_args) \
+    json="$(provider_api_get $(provider_auth_args) \
       "${base}/repos/${owner}/${repo}/pulls?state=open&per_page=100&page=${page}")" || return 1
     local count
     count="$(echo "$json" | jq 'length')"
@@ -48,5 +48,5 @@ provider_pr_head_sha() {
   owner="${OWNER:?}"
   repo="${REPO:?}"
   # shellcheck disable=SC2046
-  curl -fsSL $(provider_auth_args) "${base}/repos/${owner}/${repo}/pulls/${id}" | jq -r '.head.sha'
+  provider_api_get $(provider_auth_args) "${base}/repos/${owner}/${repo}/pulls/${id}" | jq -r '.head.sha'
 }

@@ -32,7 +32,7 @@ provider_list_open_prs() {
   page=1
   while true; do
     # shellcheck disable=SC2046
-    json="$(curl -fsSL $(provider_auth_args) \
+    json="$(provider_api_get $(provider_auth_args) \
       "${base}/projects/${proj}/merge_requests?state=opened&per_page=100&page=${page}")" || return 1
     local count
     count="$(echo "$json" | jq 'length')"
@@ -50,6 +50,6 @@ provider_pr_head_sha() {
   base="$(provider_default_api_base)"
   proj="$(_gitlab_project_path)"
   # shellcheck disable=SC2046
-  curl -fsSL $(provider_auth_args) \
+  provider_api_get $(provider_auth_args) \
     "${base}/projects/${proj}/merge_requests/${id}" | jq -r '.sha'
 }

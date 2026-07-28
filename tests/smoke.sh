@@ -172,4 +172,32 @@ done
 [[ "$pr_ok" -eq 1 ]] || { echo "FAIL: PR-only ref checkout/run"; exit 1; }
 echo "pr head fetch ok"
 
+# provider_api_get: on 502, log redacted command (no token leak)
+fakebin="$TMP/fakebin"
+mkdir -p "$fakebin"
+cat >"$fakebin/curl" <<'EOF'
+#!/bin/sh
+echo "curl: (22) The requested URL returned error: 502" >&2
+exit 22
+EOF
+chmod +x "$fakebin/curl"
+out="$(
+  PATH="$fakebin:$PATH" bash -c '
+    source "'"$ROOT"'/lib/common.sh"
+    source "'"$ROOT"'/adapters/_interface.sh"
+    provider_api_get -H "Authorization: Bearer super-secret" \
+      "https://example.com/x?access_token=also-secret" >/dev/null
+  ' 2>&1 || true
+)"
+echo "$out" | grep -q 'curl 502 command:' || { echo "FAIL: no 502 command log"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'Bearer' || { echo "FAIL: missing Bearer in cmd log"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'access_token=' || { echo "FAIL: missing access_token in cmd log"; echo "$out"; exit 1; }
+if echo "$out" | grep -q 'super-secret'; then
+  echo "FAIL: token leaked"; echo "$out"; exit 1
+fi
+if echo "$out" | grep -q 'also-secret'; then
+  echo "FAIL: access_token leaked"; echo "$out"; exit 1
+fi
+echo "provider_api_get 502 log ok"
+
 echo "SMOKE OK"
