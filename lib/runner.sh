@@ -33,6 +33,41 @@ _resolve_script() {
   fi
 }
 
+# Remote ref that carries a PR/MR head commit (API sha alone is not enough to fetch).
+_pr_head_ref() {
+  local id="$1"
+  case "${PROVIDER}" in
+    gitlab|gitcode) echo "refs/merge-requests/${id}/head" ;;
+    *) echo "refs/pull/${id}/head" ;; # github / gitee
+  esac
+}
+
+# Fetch + detach to event sha. PR heads often live only under pull/MR refs.
+_checkout_sha() {
+  local sha="$1" kind="$2" pr_id="$3" log_path="$4"
+  local pr_ref
+
+  if ! git -C "$CLONE_DIR" fetch --prune origin >>"$log_path" 2>&1; then
+    echo "fetch failed" >>"$log_path"
+    return 1
+  fi
+
+  if [[ "$kind" == "pr" && -n "$pr_id" ]]; then
+    pr_ref="$(_pr_head_ref "$pr_id")"
+    echo "fetch pr head $pr_ref" >>"$log_path"
+    if ! git -C "$CLONE_DIR" fetch origin "$pr_ref" >>"$log_path" 2>&1; then
+      echo "pr fetch failed ref=$pr_ref" >>"$log_path"
+      return 1
+    fi
+  fi
+
+  if ! git -C "$CLONE_DIR" checkout --detach "$sha" >>"$log_path" 2>&1; then
+    echo "checkout failed" >>"$log_path"
+    return 1
+  fi
+  return 0
+}
+
 # Execute one event file. Returns 0 always (failure recorded in run meta).
 run_event() {
   local event_path="$1"
@@ -82,11 +117,7 @@ run_event() {
     echo "=== checkout ==="
   } >"$log_path"
 
-  if ! git -C "$CLONE_DIR" fetch --prune origin >>"$log_path" 2>&1; then
-    echo "fetch failed" >>"$log_path"
-    exit_code=1
-  elif ! git -C "$CLONE_DIR" checkout --detach "$sha" >>"$log_path" 2>&1; then
-    echo "checkout failed" >>"$log_path"
+  if ! _checkout_sha "$sha" "$kind" "$pr_id" "$log_path"; then
     exit_code=1
   else
     local script_path cwd

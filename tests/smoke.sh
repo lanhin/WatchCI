@@ -102,6 +102,7 @@ out = mod.dump_conf({"NAME": "x", "ENABLED": "true"}, mod.PROJECT_SCHEMA)
 assert "项目名称" in out or "NAME=x" in out
 assert "# " in out
 print("config parse ok")
+
 PY
 
 # Stale project POLL_INTERVAL_SEC must not clobber global interval
@@ -125,5 +126,35 @@ bash -c '
 payload='{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 out="$(echo "$payload" | WATCHCI_PROJECT=smoke "$ROOT/hooks/webhook_ingest.sh" github push)"
 echo "$out" | grep -q '"kind": "branch"' || echo "$out" | grep -q '"kind":"branch"'
+
+# PR head lives only under refs/pull/*/head (not refs/heads/*) — must still checkout
+echo "pr-only" >"$TMP/work/pr.txt"
+git -C "$TMP/work" add pr.txt
+git -C "$TMP/work" commit -q -m "pr-only"
+PR_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+git -C "$TMP/work" push -q origin "HEAD:refs/pull/1/head"
+git -C "$TMP/work" reset -q --hard origin/main
+# enqueue PR event without API poll
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  source "'"$ROOT"'/lib/config.sh"
+  source "'"$ROOT"'/lib/events.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  event_enqueue smoke pr fix/pr-only "'"$PR_SHA"'" 1 smoke
+'
+"$ROOT/bin/watchci" tick
+pr_ok=0
+for m in "$SMOKE_DATA"/runs/*.meta.json; do
+  if grep -q "$PR_SHA" "$m" && grep -q '"status": "success"' "$m"; then
+    pr_ok=1
+    break
+  fi
+done
+[[ "$pr_ok" -eq 1 ]] || { echo "FAIL: PR-only ref checkout/run"; exit 1; }
+echo "pr head fetch ok"
 
 echo "SMOKE OK"
