@@ -437,9 +437,39 @@ class App:
                                 out[k] = v
                     elif s.startswith("started="):
                         out["started"] = s.split("=", 1)[1]
+                    elif s.startswith("timeout_sec="):
+                        out["timeout_sec"] = s.split("=", 1)[1]
         except OSError:
             pass
         return out
+
+    def _parse_finished_line(self, path: Path) -> dict[str, str]:
+        """Pull status/duration/timeout from finished marker (last 64KiB)."""
+        out: dict[str, str] = {}
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                window = min(size, 65536)
+                if size > window:
+                    f.seek(size - window)
+                tail = f.read().decode("utf-8", errors="replace")
+            for line in reversed(tail.splitlines()):
+                s = line.strip()
+                if not s.startswith(FINISHED_MARK):
+                    continue
+                # === finished status=X exit=N duration=Ys timeout_sec=Z ===
+                body = s[len(FINISHED_MARK) :].rstrip("=").strip()
+                for part in body.split():
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        out[k] = v.rstrip("s") if k == "duration" and v.endswith("s") else v
+                break
+        except OSError:
+            pass
+        return out
+
+    def _run_meta_path(self, run_id: str, data_dir: Path | None = None) -> Path:
+        return (data_dir or self.data_dir()) / "runs" / f"{run_id}.meta.json"
 
     def live_snapshot(self) -> dict:
         cfg = self.read_global()
@@ -472,6 +502,7 @@ class App:
                             "pr_id": hdr.get("pr_id", ""),
                             "sha": hdr.get("sha", ""),
                             "started": hdr.get("started", ""),
+                            "timeout_sec": hdr.get("timeout_sec", ""),
                         }
                     )
         active.sort(key=lambda r: r["mtime"], reverse=True)
@@ -508,15 +539,43 @@ class App:
             f.seek(offset)
             chunk = f.read(256 * 1024)
         text = chunk.decode("utf-8", errors="replace")
-        return {
+        hdr = self._parse_log_header(path)
+        done = self._log_finished(path)
+        out: dict = {
             "project": project,
             "file": name,
             "offset": offset,
             "next_offset": offset + len(chunk),
             "size": size,
             "text": text,
-            "done": self._log_finished(path),
+            "done": done,
+            "started": hdr.get("started", ""),
+            "timeout_sec": hdr.get("timeout_sec", ""),
         }
+        if done:
+            run_id = self._log_run_id(path)
+            meta_path = self._run_meta_path(run_id)
+            meta: dict = {}
+            if meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    meta = {}
+            fin = self._parse_finished_line(path)
+            if meta.get("duration") is not None:
+                out["duration"] = meta["duration"]
+            elif fin.get("duration") is not None:
+                try:
+                    out["duration"] = int(fin["duration"])
+                except ValueError:
+                    out["duration"] = fin["duration"]
+            out["status"] = str(meta.get("status") or fin.get("status") or "")
+            to = meta.get("timeout_sec")
+            if to is not None and to != "":
+                out["timeout_sec"] = str(to)
+            elif fin.get("timeout_sec"):
+                out["timeout_sec"] = fin["timeout_sec"]
+        return out
 
     def _read_run_meta(self, run_id: str) -> dict:
         if not RUN_ID_RE.match(run_id):
@@ -541,6 +600,32 @@ class App:
                 log.unlink()
             except OSError:
                 pass
+
+    def _tracked_sha(self, project: str, kind: str, key: str) -> str:
+        """Current head sha from state.tsv for kind+key (pr id or branch name)."""
+        if not project or not key:
+            return ""
+        sf = self.data_dir() / "state" / f"{project}.tsv"
+        if not sf.is_file():
+            return ""
+        try:
+            text = sf.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        for line in text.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[0] == kind and parts[1] == key:
+                return parts[2]
+        return ""
+
+    def _run_track_key(self, meta: dict) -> tuple[str, str]:
+        """Return (state_kind, state_key) for a run meta."""
+        kind = str(meta.get("kind") or "branch")
+        if kind == "pr":
+            pr = meta.get("pr_id")
+            if pr not in (None, ""):
+                return "pr", str(pr)
+        return "branch", str(meta.get("ref") or "")
 
     def _delete_matching_failures(self, meta: dict) -> None:
         """Drop this failure and duplicates for the same checkout (leaves rerun list)."""
@@ -592,15 +677,21 @@ class App:
             st = str(meta.get("status") or "")
             if st not in want_status:
                 continue
-            if project and str(meta.get("project") or "") != project:
+            proj = str(meta.get("project") or "")
+            if project and proj != project:
                 continue
             sha = str(meta.get("sha") or "")
             if not sha:
                 continue
+            skind, skey = self._run_track_key(meta)
+            tracked = self._tracked_sha(proj, skind, skey)
+            # only current head; no state row → keep (orphan / tests)
+            if tracked and sha != tracked:
+                continue
             out.append(
                 {
                     "id": meta.get("id") or path.name.removesuffix(".meta.json"),
-                    "project": meta.get("project") or "",
+                    "project": proj,
                     "kind": meta.get("kind") or "",
                     "ref": meta.get("ref") or "",
                     "pr_id": meta.get("pr_id"),
@@ -613,12 +704,15 @@ class App:
                 }
             )
         out.sort(key=lambda r: int(r.get("finished") or 0), reverse=True)
-        # same checkout key as _delete_matching_failures — one 重跑 row per SHA
-        seen: set[tuple[str, str, str, str, str]] = set()
+        # one 重跑 row per PR/branch (latest head only)
+        seen: set[tuple[str, str, str]] = set()
         deduped: list[dict] = []
         for r in out:
             pr = "" if r.get("pr_id") in (None, "") else str(r.get("pr_id"))
-            key = (str(r.get("project") or ""), str(r.get("kind") or ""), str(r.get("ref") or ""), pr, str(r["sha"]))
+            if str(r.get("kind") or "") == "pr" and pr:
+                key = (str(r.get("project") or ""), "pr", pr)
+            else:
+                key = (str(r.get("project") or ""), "branch", str(r.get("ref") or ""))
             if key in seen:
                 continue
             seen.add(key)
@@ -644,6 +738,45 @@ class App:
                 return True
         return False
 
+    def _drop_stale_pending(
+        self,
+        pending_dir: Path,
+        project: str,
+        kind: str,
+        ref: str,
+        sha: str,
+        pr_id: str | None,
+    ) -> None:
+        """Mirror bash event_drop_stale_pending."""
+        if not pending_dir.is_dir():
+            return
+        done_dir = self.data_dir() / "events" / "done"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        for f in list(pending_dir.glob("*.json")):
+            try:
+                ev = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if ev.get("project") != project or ev.get("kind") != kind:
+                continue
+            if str(ev.get("sha") or "") in ("", sha):
+                continue
+            if kind == "pr":
+                ev_pr = ev.get("pr_id")
+                ev_pr_s = None if ev_pr in (None, "") else str(ev_pr)
+                if ev_pr_s != pr_id:
+                    continue
+            else:
+                if str(ev.get("ref") or "") != ref:
+                    continue
+            try:
+                f.rename(done_dir / f.name)
+            except OSError:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
     def enqueue_manual(
         self,
         project: str,
@@ -655,6 +788,7 @@ class App:
         """Mirror bash event_enqueue; source=manual. Returns event_id or skipped."""
         pending_dir = self.data_dir() / "events" / "pending"
         pending_dir.mkdir(parents=True, exist_ok=True)
+        self._drop_stale_pending(pending_dir, project, kind, ref, sha, pr_id)
         if self._pending_has_dup(pending_dir, project, kind, ref, sha):
             return {"ok": True, "skipped": "already_pending"}
         event_id = f"{int(time.time())}-{os.getpid()}-{random.randint(0, 32767)}"
@@ -694,6 +828,10 @@ class App:
             pr_s = None
         else:
             pr_s = str(pr_id)
+        skind, skey = self._run_track_key(meta)
+        tracked = self._tracked_sha(project, skind, skey)
+        if tracked and sha != tracked:
+            raise ValueError("已过时，仅可重跑当前 head")
         result = self.enqueue_manual(project, kind, ref, sha, pr_s)
         result["run_id"] = run_id
         # ponytail: clear all matching failures (not only the clicked id)

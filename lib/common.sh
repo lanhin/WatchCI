@@ -82,38 +82,36 @@ lock_release() {
   rmdir "$1" 2>/dev/null || true
 }
 
-# timeout(1) may be missing on macOS — fall back to background+sleep kill.
+# Enforce a wall-clock limit; TERM then KILL the process group.
+# Always use our watchdog (macOS often has no timeout/gtimeout; TERM-ignoring
+# ctest/cmake kids need SIGKILL escalate or they run past the deadline).
 run_with_timeout() {
   local sec="$1"
   shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$sec" "$@"
-    return $?
-  fi
-  if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "$sec" "$@"
-    return $?
-  fi
-  # ponytail: monitor mode → bg job gets its own pgid; kill -pgid hits ctest kids
-  # ceiling: no SIGKILL escalate if kids ignore TERM (UI still trusts meta.json)
-  local pid watcher ec
+  local grace="${WATCHCI_TIMEOUT_KILL_GRACE:-8}"
+  local pid watcher ec start end
+  start="$(date +%s)"
+
+  # ponytail: monitor mode → bg job gets its own pgid; kill -pgid hits kids
   set -m
   "$@" &
   pid=$!
   (
     sleep "$sec"
     kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    sleep "$grace"
+    kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
   ) &
   watcher=$!
-  set +e
   wait "$pid"
   ec=$?
-  set -e
+  end="$(date +%s)"
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   set +m 2>/dev/null || true
-  # 143/137 often means killed by timeout → map to 124 like GNU timeout
-  if [[ "$ec" -eq 143 || "$ec" -eq 137 ]]; then
+
+  # Past deadline ⇒ timeout even if the script ignored TERM and exited 0
+  if (( end - start >= sec )); then
     return 124
   fi
   return "$ec"

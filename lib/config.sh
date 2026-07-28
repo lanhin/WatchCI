@@ -15,6 +15,9 @@ _apply_global_defaults() {
   POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-60}"
   MAX_PARALLEL_RUNS="${MAX_PARALLEL_RUNS:-1}"
   DEFAULT_TIMEOUT_SEC="${DEFAULT_TIMEOUT_SEC:-1800}"
+  if ! [[ "$DEFAULT_TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
+    DEFAULT_TIMEOUT_SEC=1800
+  fi
   SITE_DIR="${SITE_DIR:-$DATA_DIR/site}"
   [[ "$SITE_DIR" = /* ]] || SITE_DIR="$WATCHCI_ROOT/$SITE_DIR"
   PUBLISH_CMD="${PUBLISH_CMD:-}"
@@ -35,12 +38,14 @@ _apply_global_defaults() {
 # Keys that may be set on the CLI env and should win over conf file.
 # Capture once at first load — exported values from a prior load must not
 # poison reload (UI save → SIGHUP / reload.request).
+# IMPORTANT: daemon_tick re-sources this file; keep the flag with := so a
+# re-source does not forget the capture and re-stash exported conf values.
 _ENV_OVERRIDE_KEYS=(
   ADMIN_ENABLE ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_PID_FILE
   POLL_INTERVAL_SEC DATA_DIR SITE_DIR PUBLISH_CMD AUTO_PUBLISH
   PID_FILE LOG_FILE MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC
 )
-_ENV_OVERRIDES_CAPTURED=0
+: "${_ENV_OVERRIDES_CAPTURED:=0}"
 
 _save_env_overrides() {
   [[ "$_ENV_OVERRIDES_CAPTURED" -eq 1 ]] && return 0
@@ -119,6 +124,11 @@ load_project_file() {
   ENABLED="${ENABLED:-true}"
   ALLOW_MANUAL_RERUN="${ALLOW_MANUAL_RERUN:-true}"
   TIMEOUT_SEC="${TIMEOUT_SEC:-$DEFAULT_TIMEOUT_SEC}"
+  # ponytail: reject junk so run_with_timeout never gets "" / "30s"
+  if ! [[ "$TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
+    warn "project $NAME: invalid TIMEOUT_SEC=$TIMEOUT_SEC, fallback $DEFAULT_TIMEOUT_SEC"
+    TIMEOUT_SEC="$DEFAULT_TIMEOUT_SEC"
+  fi
   if [[ -z "${CLONE_DIR:-}" ]]; then
     CLONE_DIR="$DATA_DIR/clones/$NAME"
   elif [[ "$CLONE_DIR" != /* ]]; then

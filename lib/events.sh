@@ -4,6 +4,32 @@
 events_pending_dir() { echo "$DATA_DIR/events/pending"; }
 events_done_dir() { echo "$DATA_DIR/events/done"; }
 
+# Drop pending for same PR/branch key but different sha (newer head wins).
+event_drop_stale_pending() {
+  local project="$1" kind="$2" ref="$3" sha="$4" pr_id="${5:-}"
+  local f f_project f_kind f_ref f_sha f_pr
+  mkdir -p "$(events_pending_dir)"
+  for f in "$(events_pending_dir)"/*.json; do
+    [[ -f "$f" ]] || continue
+    f_project="$(event_field "$f" project)"
+    [[ "$f_project" == "$project" ]] || continue
+    f_kind="$(event_field "$f" kind)"
+    [[ "$f_kind" == "$kind" ]] || continue
+    f_sha="$(event_field "$f" sha)"
+    [[ -n "$f_sha" && "$f_sha" != "$sha" ]] || continue
+    if [[ "$kind" == "pr" ]]; then
+      f_pr="$(event_field "$f" pr_id)"
+      [[ "$f_pr" == "null" ]] && f_pr=
+      [[ "$f_pr" == "$pr_id" ]] || continue
+    else
+      f_ref="$(event_field "$f" ref)"
+      [[ "$f_ref" == "$ref" ]] || continue
+    fi
+    info "drop stale pending $(basename "$f") sha=${f_sha:0:8} keep=${sha:0:8}"
+    event_mark_done "$f"
+  done
+}
+
 # Enqueue event. Args: project kind ref sha [pr_id] [source]
 event_enqueue() {
   local project="$1" kind="$2" ref="$3" sha="$4"
@@ -13,6 +39,7 @@ event_enqueue() {
   id="$(make_id)"
   path="$(events_pending_dir)/${id}.json"
   mkdir -p "$(events_pending_dir)"
+  event_drop_stale_pending "$project" "$kind" "$ref" "$sha" "$pr_id"
   # Dedup: skip if pending already has same project+kind+ref+sha
   local f
   for f in "$(events_pending_dir)"/*.json; do
@@ -54,6 +81,7 @@ events_list_pending() {
 
 event_mark_done() {
   local path="$1"
+  [[ -f "$path" ]] || return 0
   mkdir -p "$(events_done_dir)"
   mv -f "$path" "$(events_done_dir)/$(basename "$path")"
 }

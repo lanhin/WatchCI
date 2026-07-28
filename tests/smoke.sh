@@ -88,6 +88,12 @@ ADMIN_ENABLE=true bash -c '
   load_global_config
   [[ "$DEFAULT_TIMEOUT_SEC" == "99" ]] || { echo "FAIL: reload did not apply DEFAULT_TIMEOUT_SEC (got $DEFAULT_TIMEOUT_SEC)"; exit 1; }
   [[ "$ADMIN_ENABLE" == "true" ]] || { echo "FAIL: env override lost after reload"; exit 1; }
+  # daemon_tick re-sources config.sh each loop — must not re-poison overrides
+  source "'"$ROOT"'/lib/config.sh"
+  sed -i.bak "s/^DEFAULT_TIMEOUT_SEC=.*/DEFAULT_TIMEOUT_SEC=100/" "'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_TIMEOUT_SEC" == "100" ]] || { echo "FAIL: after re-source, got DEFAULT_TIMEOUT_SEC=$DEFAULT_TIMEOUT_SEC want 100"; exit 1; }
+  [[ "$ADMIN_ENABLE" == "true" ]] || { echo "FAIL: env override lost after re-source"; exit 1; }
   echo "env override + reload ok"
 '
 
@@ -139,9 +145,25 @@ _near.write_text(
     encoding="utf-8",
 )
 assert _app._log_finished(_near, Path("$SMOKE_DATA/missing-data"))
+# timeout_sec header + finished duration for live UI
+_to = _logs / "1785234105-timeout-ui-deadbeef.log"
+_to.write_text(
+    "=== WatchCI run ===\n"
+    "project=smoke kind=branch ref=main pr_id= sha=abc\n"
+    "started=2026-01-01T00:00:00Z\n"
+    "timeout_sec=42\n"
+    "=== script ./x (cwd=/tmp timeout_sec=42) ===\n"
+    "=== finished status=timeout exit=124 duration=42s timeout_sec=42 ===\n",
+    encoding="utf-8",
+)
+_hdr = _app._parse_log_header(_to)
+assert _hdr.get("timeout_sec") == "42", _hdr
+_fin = _app._parse_finished_line(_to)
+assert _fin.get("status") == "timeout" and _fin.get("duration") == "42" and _fin.get("timeout_sec") == "42", _fin
 # cleanup fixtures so later rerun list smoke is not polluted
 _buried.unlink(missing_ok=True)
 _near.unlink(missing_ok=True)
+_to.unlink(missing_ok=True)
 (_app_data / "runs" / "1785234105-82352-10123.meta.json").unlink(missing_ok=True)
 _live.unlink(missing_ok=True)
 print("live log detect ok")
@@ -152,6 +174,33 @@ except ValueError:
     pass
 print("live path reject ok")
 PY
+
+# run_with_timeout must kill and return 124
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  set +e
+  run_with_timeout 1 sleep 30
+  ec=$?
+  set -e
+  [[ "$ec" -eq 124 ]] || { echo "FAIL: run_with_timeout expected 124 got $ec"; exit 1; }
+  echo "run_with_timeout ok"
+'
+
+# TERM-ignoring script must still hit deadline (SIGKILL escalate + elapsed gate)
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  export WATCHCI_TIMEOUT_KILL_GRACE=1
+  set +e
+  t0=$(date +%s)
+  run_with_timeout 2 bash -c "trap \"\" TERM; sleep 30; echo should_not_print"
+  ec=$?
+  t1=$(date +%s)
+  set -e
+  [[ "$ec" -eq 124 ]] || { echo "FAIL: TERM-ignore expected 124 got $ec"; exit 1; }
+  wall=$((t1 - t0))
+  [[ "$wall" -lt 10 ]] || { echo "FAIL: TERM-ignore wall=${wall}s too long"; exit 1; }
+  echo "run_with_timeout TERM-ignore ok (${wall}s)"
+'
 
 # Stale project POLL_INTERVAL_SEC must not clobber global interval
 cat >>"$TMP/config/projects/smoke.conf" <<EOF
@@ -320,6 +369,8 @@ root = Path("$TMP")
 data = Path("$SMOKE_DATA")
 runs = data / "runs"
 runs.mkdir(parents=True, exist_ok=True)
+state_dir = data / "state"
+state_dir.mkdir(parents=True, exist_ok=True)
 pending = data / "events" / "pending"
 if pending.is_dir():
     for f in pending.glob("*.json"):
@@ -349,6 +400,12 @@ ok_id = "smoke-ok-hide"
     encoding="utf-8",
 )
 
+# earlier ticks left state for main at real git sha — point at fixture head
+(state_dir / "smoke.tsv").write_text(
+    f"branch\tmain\t{sha}\tfailure\t{fail_id}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
+
 app = mod.App(root, "", data / "watchci.pid")
 listed = app.list_runs()
 ids = {r["id"] for r in listed}
@@ -371,14 +428,15 @@ dup_new = "smoke-timeout-new"
     ),
     encoding="utf-8",
 )
-# different sha stays separate
-other = "smoke-timeout-other"
-(runs / f"{other}.meta.json").write_text(
+# stale sha (same branch) hidden when state points at current head
+stale = "smoke-timeout-stale"
+stale_sha = "cccccccccccccccccccccccccccccccccccccccc"
+(runs / f"{stale}.meta.json").write_text(
     json.dumps(
         {
             **meta,
-            "id": other,
-            "sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "id": stale,
+            "sha": stale_sha,
             "status": "timeout",
             "exit_code": 124,
             "finished": 15,
@@ -386,14 +444,31 @@ other = "smoke-timeout-other"
     ),
     encoding="utf-8",
 )
+(state_dir / "smoke.tsv").write_text(
+    f"branch\tmain\t{dup_sha}\ttimeout\t{dup_new}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
 listed2 = app.list_runs()
 ids2 = {r["id"] for r in listed2}
-assert dup_new in ids2 and other in ids2, listed2
+assert dup_new in ids2, listed2
 assert dup_old not in ids2, listed2
-assert fail_id in ids2
+assert stale not in ids2, listed2
+assert fail_id not in ids2, listed2  # fail_id sha != tracked head
+try:
+    app.rerun_run(stale)
+    raise SystemExit("FAIL: expected ValueError for stale sha rerun")
+except ValueError as e:
+    assert "过时" in str(e), e
 (runs / f"{dup_old}.meta.json").unlink()
 (runs / f"{dup_new}.meta.json").unlink()
-(runs / f"{other}.meta.json").unlink()
+(runs / f"{stale}.meta.json").unlink()
+
+# point state at fail_id sha so rerun is allowed
+(state_dir / "smoke.tsv").write_text(
+    f"branch\tmain\t{sha}\tfailure\t{fail_id}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
+assert fail_id in {r["id"] for r in app.list_runs()}
 
 r1 = app.rerun_run(fail_id)
 assert r1.get("ok") and r1.get("event_id"), r1
@@ -418,6 +493,58 @@ r2 = app.rerun_run(fail_id2)
 assert r2.get("skipped") == "already_pending", r2
 assert not (runs / f"{fail_id2}.meta.json").is_file()
 assert not (runs / f"{fail_id2b}.meta.json").is_file()
+
+# PR: only latest head in list; stale sha rejected
+pr_cur = "smoke-pr-cur"
+pr_old = "smoke-pr-old"
+pr_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+pr_old_sha = "ffffffffffffffffffffffffffffffffffffffff"
+(runs / f"{pr_cur}.meta.json").write_text(
+    json.dumps(
+        {
+            **meta,
+            "id": pr_cur,
+            "kind": "pr",
+            "ref": "feat/x",
+            "pr_id": "99",
+            "sha": pr_sha,
+            "status": "failure",
+            "finished": 30,
+        }
+    ),
+    encoding="utf-8",
+)
+(runs / f"{pr_old}.meta.json").write_text(
+    json.dumps(
+        {
+            **meta,
+            "id": pr_old,
+            "kind": "pr",
+            "ref": "feat/x",
+            "pr_id": "99",
+            "sha": pr_old_sha,
+            "status": "timeout",
+            "exit_code": 124,
+            "finished": 25,
+        }
+    ),
+    encoding="utf-8",
+)
+(state_dir / "smoke.tsv").write_text(
+    f"branch\tmain\t{sha}\tfailure\t{fail_id}\t2026-01-01T00:00:00Z\n"
+    f"pr\t99\t{pr_sha}\tfailure\t{pr_cur}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
+listed_pr = app.list_runs()
+pr_ids = {r["id"] for r in listed_pr}
+assert pr_cur in pr_ids and pr_old not in pr_ids, listed_pr
+try:
+    app.rerun_run(pr_old)
+    raise SystemExit("FAIL: expected ValueError for stale PR sha")
+except ValueError as e:
+    assert "过时" in str(e), e
+(runs / f"{pr_cur}.meta.json").unlink()
+(runs / f"{pr_old}.meta.json").unlink()
 
 # gate: ALLOW_MANUAL_RERUN=false
 conf = Path("$TMP/config/projects/smoke.conf")

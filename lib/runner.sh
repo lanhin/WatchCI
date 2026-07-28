@@ -142,6 +142,22 @@ run_event() {
   # shellcheck disable=SC2064
   trap "_clone_cleanup; lock_release '$lockdir'" RETURN
 
+  # ponytail: only current head; stale SHA must not run or regress state
+  local tracked state_kind state_key
+  if [[ "$kind" == "pr" && -n "$pr_id" ]]; then
+    state_kind=pr
+    state_key="$pr_id"
+  else
+    state_kind=branch
+    state_key="$ref"
+  fi
+  tracked="$(state_get_sha "$state_kind" "$state_key")"
+  if [[ -n "$tracked" && "$tracked" != "$sha" ]]; then
+    info "skip stale event project=$NAME $state_kind=$state_key sha=${sha:0:8} tracked=${tracked:0:8}"
+    event_mark_done "$event_path"
+    return 0
+  fi
+
   ensure_clone
   local run_id start_epoch end_epoch exit_code status
   run_id="$(make_id)"
@@ -156,6 +172,7 @@ run_event() {
     echo "=== WatchCI run $run_id ==="
     echo "project=$NAME kind=$kind ref=$ref pr_id=${pr_id:-} sha=$sha"
     echo "started=$(iso_now)"
+    echo "timeout_sec=$TIMEOUT_SEC"
     echo "=== checkout ==="
   } >"$log_path"
 
@@ -173,13 +190,15 @@ run_event() {
       fi
     fi
     {
-      echo "=== script $script_path (cwd=$cwd) ==="
+      echo "=== script $script_path (cwd=$cwd timeout_sec=$TIMEOUT_SEC) ==="
     } >>"$log_path"
     if [[ ! -f "$script_path" ]]; then
       echo "script not found: $script_path" >>"$log_path"
       exit_code=127
     else
       chmod +x "$script_path" 2>/dev/null || true
+      # duration / timeout apply to script only (not clone/checkout)
+      start_epoch="$(epoch_now)"
       set +e
       (
         cd "$cwd" || exit 1
@@ -190,6 +209,7 @@ run_event() {
         export WATCHCI_PROJECT="$NAME"
         export WATCHCI_LOG="$log_path"
         export WATCHCI_RUN_ID="$run_id"
+        export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
         run_with_timeout "$TIMEOUT_SEC" bash "$script_path"
       ) >>"$log_path" 2>&1
       exit_code=$?
@@ -198,6 +218,7 @@ run_event() {
   fi
 
   end_epoch="$(epoch_now)"
+  local duration=$((end_epoch - start_epoch))
   if [[ "$exit_code" -eq 0 ]]; then
     status=success
   elif [[ "$exit_code" -eq 124 ]]; then
@@ -205,7 +226,7 @@ run_event() {
   else
     status=failure
   fi
-  echo "=== finished status=$status exit=$exit_code ===" >>"$log_path"
+  echo "=== finished status=$status exit=$exit_code duration=${duration}s timeout_sec=$TIMEOUT_SEC ===" >>"$log_path"
 
   # Write run meta JSON
   local meta="$DATA_DIR/runs/${run_id}.meta.json"
@@ -221,30 +242,34 @@ run_event() {
       --argjson exit_code "$exit_code" \
       --argjson started "$start_epoch" \
       --argjson finished "$end_epoch" \
-      --argjson duration $((end_epoch - start_epoch)) \
+      --argjson duration "$duration" \
+      --argjson timeout_sec "$TIMEOUT_SEC" \
       --arg log "$log_path" \
       '{
         id:$id, project:$project, kind:$kind, ref:$ref,
         pr_id:(if $pr_id=="" then null else $pr_id end),
         sha:$sha, status:$status, exit_code:$exit_code,
-        started:$started, finished:$finished, duration:$duration, log:$log
+        started:$started, finished:$finished, duration:$duration,
+        timeout_sec:$timeout_sec, log:$log
       }' >"$meta"
   else
     cat >"$meta" <<EOF
-{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$((end_epoch - start_epoch)),"log":"$log_path"}
+{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$duration,"timeout_sec":$TIMEOUT_SEC,"log":"$log_path"}
 EOF
   fi
 
-  if [[ "$kind" == "pr" && -n "$pr_id" ]]; then
-    state_set pr "$pr_id" "$sha" "$status" "$run_id"
+  # only write result if still the tracked head (poll may have moved on)
+  tracked="$(state_get_sha "$state_kind" "$state_key")"
+  if [[ -z "$tracked" || "$tracked" == "$sha" ]]; then
+    state_set "$state_kind" "$state_key" "$sha" "$status" "$run_id"
   else
-    state_set branch "$ref" "$sha" "$status" "$run_id"
+    info "skip state regress project=$NAME $state_kind=$state_key sha=${sha:0:8} tracked=${tracked:0:8}"
   fi
 
   site_update_after_run "$run_id" || warn "site update failed"
 
   event_mark_done "$event_path"
-  info "run $run_id done status=$status"
+  info "run $run_id done status=$status duration=${duration}s timeout_sec=$TIMEOUT_SEC"
 }
 
 # Drain up to MAX_PARALLEL_RUNS events (serial if 1).

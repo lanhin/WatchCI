@@ -60,19 +60,34 @@
     if (!started) return "";
     const t = Date.parse(started);
     if (Number.isNaN(t)) return "";
-    let sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
-    const h = Math.floor(sec / 3600);
-    sec %= 3600;
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
+    return fmtSec(Math.max(0, Math.floor((Date.now() - t) / 1000)));
+  };
+
+  const fmtSec = (sec) => {
+    let n = Math.max(0, Math.floor(Number(sec)));
+    if (Number.isNaN(n)) return "";
+    const h = Math.floor(n / 3600);
+    n %= 3600;
+    const m = Math.floor(n / 60);
+    const s = n % 60;
     if (h > 0) return h + "h" + m + "m" + s + "s";
     if (m > 0) return m + "m" + s + "s";
     return s + "s";
   };
 
+  const fmtTimeout = (sec) => {
+    if (sec === undefined || sec === null || sec === "") return "";
+    return "TIMEOUT_SEC=" + sec;
+  };
+
   const selectLive = (item) => {
     liveSel = item
-      ? { project: item.project, file: item.file, started: item.started || "" }
+      ? {
+          project: item.project,
+          file: item.file,
+          started: item.started || "",
+          timeout_sec: item.timeout_sec || "",
+        }
       : null;
     liveOffset = 0;
     $("live-log").textContent = "";
@@ -86,6 +101,7 @@
       item.pr_id ? "PR#" + item.pr_id : "",
       item.ref,
       shortSha(item.sha),
+      fmtTimeout(item.timeout_sec),
     ].filter(Boolean);
     $("live-sub").textContent = bits.join(" · ") || item.file;
     $("live-status").textContent = "跟进中…";
@@ -114,6 +130,8 @@
       return;
     }
     const body = await res.json();
+    if (body.timeout_sec) liveSel.timeout_sec = String(body.timeout_sec);
+    if (body.started) liveSel.started = body.started;
     if (body.text) {
       const pre = $("live-log");
       pre.textContent += body.text;
@@ -122,16 +140,29 @@
       }
     }
     liveOffset = body.next_offset;
+    const to = fmtTimeout(liveSel.timeout_sec);
     if (body.done) {
-      $("live-status").textContent = "已结束 · 完整日志仍可在此查看，结果见静态看板";
+      const dur =
+        body.duration != null && body.duration !== ""
+          ? fmtSec(body.duration)
+          : fmtElapsed(liveSel.started);
+      const parts = ["已结束"];
+      if (body.status) parts.push(body.status);
+      if (dur) parts.push("共 " + dur);
+      if (to) parts.push(to);
+      parts.push("完整日志仍可在此查看");
+      $("live-status").textContent = parts.join(" · ");
       $("live-status").classList.add("done");
     } else {
       const elapsed = fmtElapsed(liveSel.started);
-      $("live-status").textContent =
-        "跟进中 · " +
-        (elapsed ? "已执行 " + elapsed + " · " : "") +
-        body.size +
-        " bytes";
+      $("live-status").textContent = [
+        "跟进中",
+        elapsed ? "已执行 " + elapsed : "",
+        to,
+        body.size + " bytes",
+      ]
+        .filter(Boolean)
+        .join(" · ");
       $("live-status").classList.remove("done");
     }
   };
@@ -162,6 +193,7 @@
         item.ref || "",
         shortSha(item.sha),
         elapsed ? "已执行 " + elapsed : "",
+        fmtTimeout(item.timeout_sec),
       ]
         .filter(Boolean)
         .join(" · ");
@@ -178,7 +210,10 @@
     }
     if (liveSel) {
       const cur = active.find((a) => a.project === liveSel.project && a.file === liveSel.file);
-      if (cur && cur.started) liveSel.started = cur.started;
+      if (cur) {
+        if (cur.started) liveSel.started = cur.started;
+        if (cur.timeout_sec) liveSel.timeout_sec = cur.timeout_sec;
+      }
       if (!cur && active.length) {
         // keep selection so user can read finished log; status updated by tail
       } else if (!cur && !active.length && !$("live-work").classList.contains("hidden")) {
