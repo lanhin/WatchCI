@@ -56,8 +56,24 @@
 
   const shortSha = (s) => (s && s.length > 8 ? s.slice(0, 8) : s || "");
 
+  const fmtElapsed = (started) => {
+    if (!started) return "";
+    const t = Date.parse(started);
+    if (Number.isNaN(t)) return "";
+    let sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    const h = Math.floor(sec / 3600);
+    sec %= 3600;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (h > 0) return h + "h" + m + "m" + s + "s";
+    if (m > 0) return m + "m" + s + "s";
+    return s + "s";
+  };
+
   const selectLive = (item) => {
-    liveSel = item ? { project: item.project, file: item.file } : null;
+    liveSel = item
+      ? { project: item.project, file: item.file, started: item.started || "" }
+      : null;
     liveOffset = 0;
     $("live-log").textContent = "";
     const work = !!liveSel;
@@ -65,7 +81,12 @@
     $("live-work").classList.toggle("hidden", !work);
     if (!work) return;
     $("live-title").textContent = item.project + " · " + (item.run_id || item.file);
-    const bits = [item.kind, item.ref, shortSha(item.sha)].filter(Boolean);
+    const bits = [
+      item.kind,
+      item.pr_id ? "PR#" + item.pr_id : "",
+      item.ref,
+      shortSha(item.sha),
+    ].filter(Boolean);
     $("live-sub").textContent = bits.join(" · ") || item.file;
     $("live-status").textContent = "跟进中…";
     $("live-status").classList.remove("done");
@@ -105,7 +126,12 @@
       $("live-status").textContent = "已结束 · 完整日志仍可在此查看，结果见静态看板";
       $("live-status").classList.add("done");
     } else {
-      $("live-status").textContent = "跟进中 · " + body.size + " bytes";
+      const elapsed = fmtElapsed(liveSel.started);
+      $("live-status").textContent =
+        "跟进中 · " +
+        (elapsed ? "已执行 " + elapsed + " · " : "") +
+        body.size +
+        " bytes";
       $("live-status").classList.remove("done");
     }
   };
@@ -129,7 +155,14 @@
       nm.textContent = item.project;
       const meta = document.createElement("span");
       meta.className = "proj-meta";
-      meta.textContent = [item.kind || "run", item.ref || "", shortSha(item.sha)]
+      const elapsed = fmtElapsed(item.started);
+      meta.textContent = [
+        item.kind || "run",
+        item.pr_id ? "PR#" + item.pr_id : "",
+        item.ref || "",
+        shortSha(item.sha),
+        elapsed ? "已执行 " + elapsed : "",
+      ]
         .filter(Boolean)
         .join(" · ");
       li.appendChild(nm);
@@ -144,10 +177,11 @@
       ul.appendChild(li);
     }
     if (liveSel) {
-      const still = active.some((a) => a.project === liveSel.project && a.file === liveSel.file);
-      if (!still && active.length) {
+      const cur = active.find((a) => a.project === liveSel.project && a.file === liveSel.file);
+      if (cur && cur.started) liveSel.started = cur.started;
+      if (!cur && active.length) {
         // keep selection so user can read finished log; status updated by tail
-      } else if (!still && !active.length && !$("live-work").classList.contains("hidden")) {
+      } else if (!cur && !active.length && !$("live-work").classList.contains("hidden")) {
         // leave finished view until user clears / new run
       } else if (!liveSel && active.length) {
         selectLive(active[0]);

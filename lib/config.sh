@@ -33,13 +33,17 @@ _apply_global_defaults() {
 }
 
 # Keys that may be set on the CLI env and should win over conf file.
+# Capture once at first load — exported values from a prior load must not
+# poison reload (UI save → SIGHUP / reload.request).
 _ENV_OVERRIDE_KEYS=(
   ADMIN_ENABLE ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_PID_FILE
   POLL_INTERVAL_SEC DATA_DIR SITE_DIR PUBLISH_CMD AUTO_PUBLISH
   PID_FILE LOG_FILE MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC
 )
+_ENV_OVERRIDES_CAPTURED=0
 
 _save_env_overrides() {
+  [[ "$_ENV_OVERRIDES_CAPTURED" -eq 1 ]] && return 0
   local k
   for k in "${_ENV_OVERRIDE_KEYS[@]}"; do
     if [[ -n "${!k+x}" ]]; then
@@ -49,6 +53,7 @@ _save_env_overrides() {
       printf -v "_ENV_SET_$k" '%s' 0
     fi
   done
+  _ENV_OVERRIDES_CAPTURED=1
 }
 
 _restore_env_overrides() {

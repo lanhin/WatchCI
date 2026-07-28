@@ -119,13 +119,35 @@ daemon_start_admin_if_enabled() {
   return 0
 }
 
+daemon_admin_is_running() {
+  local apid
+  [[ -f "$ADMIN_PID_FILE" ]] || return 1
+  apid="$(cat "$ADMIN_PID_FILE" 2>/dev/null || true)"
+  [[ -n "$apid" ]] || return 1
+  kill -0 "$apid" 2>/dev/null
+}
+
 daemon_stop_admin() {
+  local apid=""
   if [[ -f "$ADMIN_PID_FILE" ]]; then
-    local apid
     apid="$(cat "$ADMIN_PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$apid" ]] && kill -0 "$apid" 2>/dev/null; then
-      kill "$apid" 2>/dev/null || true
+  fi
+  if [[ -n "$apid" ]] && kill -0 "$apid" 2>/dev/null; then
+    info "stopping admin UI pid=$apid"
+    kill "$apid" 2>/dev/null || true
+    local i=0
+    while kill -0 "$apid" 2>/dev/null && [[ "$i" -lt 25 ]]; do
+      sleep 0.2
+      i=$((i + 1))
+    done
+    if kill -0 "$apid" 2>/dev/null; then
+      warn "force kill admin UI pid=$apid"
+      kill -KILL "$apid" 2>/dev/null || true
     fi
+    rm -f "$ADMIN_PID_FILE"
+    info "admin UI stopped"
+  else
+    info "admin UI not running"
     rm -f "$ADMIN_PID_FILE"
   fi
 }
@@ -161,6 +183,9 @@ daemon_loop() {
 daemon_stop() {
   _source_runtime
   load_global_config
+  local admin_was_running=0
+  daemon_admin_is_running && admin_was_running=1
+
   if ! daemon_is_running; then
     info "daemon not running"
     daemon_stop_admin
@@ -180,7 +205,17 @@ daemon_stop() {
     warn "force kill $pid"
     kill -KILL "$pid" 2>/dev/null || true
   fi
-  daemon_stop_admin
+  info "daemon stopped"
+  # Daemon loop usually stops admin itself; only act if UI is still up (orphan / race).
+  if daemon_admin_is_running; then
+    daemon_stop_admin
+  elif [[ "$admin_was_running" -eq 1 ]]; then
+    info "admin UI stopped"
+    rm -f "$ADMIN_PID_FILE"
+  else
+    info "admin UI not running"
+    rm -f "$ADMIN_PID_FILE"
+  fi
   daemon_clear_pid
 }
 

@@ -117,12 +117,15 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
     rows = []
     for r in runs[:200]:
         st = html.escape(str(r.get("status", "")))
+        pr = r.get("pr_id")
+        pr_cell = html.escape(f"#{pr}") if pr not in (None, "") else "—"
         rows.append(
             "<tr>"
             f'<td><a href="runs/{html.escape(r["id"])}/index.html">{html.escape(r["id"])}</a></td>'
             f'<td>{html.escape(str(r.get("project","")))}</td>'
             f'<td class="status-{st}">{st}</td>'
             f'<td>{html.escape(str(r.get("kind","")))}</td>'
+            f"<td>{pr_cell}</td>"
             f'<td>{html.escape(str(r.get("ref","")))}</td>'
             f'<td><code>{html.escape(str(r.get("sha","")[:8]))}</code></td>'
             f'<td>{html.escape(str(r.get("duration","")))}s</td>'
@@ -156,7 +159,7 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
     </select>
   </div>
   <table id="runs-table">
-    <thead><tr><th>ID</th><th>Project</th><th>Status</th><th>Kind</th><th>Ref</th><th>SHA</th><th>Dur</th></tr></thead>
+    <thead><tr><th>ID</th><th>Project</th><th>Status</th><th>Kind</th><th>PR</th><th>Ref</th><th>SHA</th><th>Dur</th></tr></thead>
     <tbody>
 {"".join(rows)}
     </tbody>

@@ -82,7 +82,13 @@ ADMIN_ENABLE=true bash -c '
   export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
   load_global_config
   [[ "$ADMIN_ENABLE" == "true" ]] || { echo "FAIL: env ADMIN_ENABLE override lost"; exit 1; }
-  echo "env override ok"
+  # reload must pick up conf changes (not re-capture exported vars as CLI overrides)
+  [[ "$DEFAULT_TIMEOUT_SEC" == "60" ]] || { echo "FAIL: expected initial DEFAULT_TIMEOUT_SEC=60"; exit 1; }
+  sed -i.bak "s/^DEFAULT_TIMEOUT_SEC=.*/DEFAULT_TIMEOUT_SEC=99/" "'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_TIMEOUT_SEC" == "99" ]] || { echo "FAIL: reload did not apply DEFAULT_TIMEOUT_SEC (got $DEFAULT_TIMEOUT_SEC)"; exit 1; }
+  [[ "$ADMIN_ENABLE" == "true" ]] || { echo "FAIL: env override lost after reload"; exit 1; }
+  echo "env override + reload ok"
 '
 
 # Config parse round-trip via admin module
@@ -110,15 +116,41 @@ _logs.mkdir(parents=True, exist_ok=True)
 _live = _logs / "999-test-deadbeef.log"
 _live.write_text("=== WatchCI run ===\nrunning...\n", encoding="utf-8")
 _app = mod.App(Path("$ROOT"), "", Path("$SMOKE_DATA/watchci.pid"))
-assert not _app._log_finished(_live)
+_app_data = Path("$SMOKE_DATA")
+assert not _app._log_finished(_live, _app_data)
 _live.write_text(_live.read_text(encoding="utf-8") + "=== finished status=success exit=0 ===\n", encoding="utf-8")
-assert _app._log_finished(_live)
+assert _app._log_finished(_live, _app_data)
+# meta wins even when orphan stdout buries the finish mark past the tail window
+_buried = _logs / "1785234105-82352-10123-8f2bb147.log"
+_buried.write_text(
+    "=== WatchCI run ===\n=== finished status=timeout exit=124 ===\n" + ("x" * 70000),
+    encoding="utf-8",
+)
+(_app_data / "runs").mkdir(parents=True, exist_ok=True)
+(_app_data / "runs" / "1785234105-82352-10123.meta.json").write_text(
+    '{"id":"1785234105-82352-10123","status":"timeout"}\n', encoding="utf-8"
+)
+assert _app._log_finished(_buried, _app_data)
+assert not _app._log_finished(_buried, Path("$SMOKE_DATA/missing-data"))  # no meta → tail only; mark buried
+# without meta, enlarged 64KiB window still sees mark if within window
+_near = _logs / "1785234105-82352-99999-aabbccdd.log"
+_near.write_text(
+    "=== WatchCI run ===\n=== finished status=timeout exit=124 ===\n" + ("y" * 10000),
+    encoding="utf-8",
+)
+assert _app._log_finished(_near, Path("$SMOKE_DATA/missing-data"))
+# cleanup fixtures so later rerun list smoke is not polluted
+_buried.unlink(missing_ok=True)
+_near.unlink(missing_ok=True)
+(_app_data / "runs" / "1785234105-82352-10123.meta.json").unlink(missing_ok=True)
+_live.unlink(missing_ok=True)
+print("live log detect ok")
 try:
     _app.tail_run_log("bad/name", "x.log", 0)
     raise SystemExit("FAIL: path reject")
 except ValueError:
     pass
-print("live log detect ok")
+print("live path reject ok")
 PY
 
 # Stale project POLL_INTERVAL_SEC must not clobber global interval
@@ -322,6 +354,46 @@ listed = app.list_runs()
 ids = {r["id"] for r in listed}
 assert fail_id in ids, listed
 assert ok_id not in ids, listed
+
+# same checkout: multiple timeout/failure metas → one list row (newest)
+dup_sha = "dddddddddddddddddddddddddddddddddddddddd"
+dup_old = "smoke-timeout-old"
+dup_new = "smoke-timeout-new"
+(runs / f"{dup_old}.meta.json").write_text(
+    json.dumps(
+        {**meta, "id": dup_old, "sha": dup_sha, "status": "timeout", "exit_code": 124, "finished": 10}
+    ),
+    encoding="utf-8",
+)
+(runs / f"{dup_new}.meta.json").write_text(
+    json.dumps(
+        {**meta, "id": dup_new, "sha": dup_sha, "status": "timeout", "exit_code": 124, "finished": 20}
+    ),
+    encoding="utf-8",
+)
+# different sha stays separate
+other = "smoke-timeout-other"
+(runs / f"{other}.meta.json").write_text(
+    json.dumps(
+        {
+            **meta,
+            "id": other,
+            "sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "status": "timeout",
+            "exit_code": 124,
+            "finished": 15,
+        }
+    ),
+    encoding="utf-8",
+)
+listed2 = app.list_runs()
+ids2 = {r["id"] for r in listed2}
+assert dup_new in ids2 and other in ids2, listed2
+assert dup_old not in ids2, listed2
+assert fail_id in ids2
+(runs / f"{dup_old}.meta.json").unlink()
+(runs / f"{dup_new}.meta.json").unlink()
+(runs / f"{other}.meta.json").unlink()
 
 r1 = app.rerun_run(fail_id)
 assert r1.get("ok") and r1.get("event_id"), r1

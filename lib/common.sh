@@ -94,20 +94,24 @@ run_with_timeout() {
     gtimeout "$sec" "$@"
     return $?
   fi
+  # ponytail: monitor mode → bg job gets its own pgid; kill -pgid hits ctest kids
+  # ceiling: no SIGKILL escalate if kids ignore TERM (UI still trusts meta.json)
+  local pid watcher ec
+  set -m
   "$@" &
-  local pid=$!
-  local watcher
+  pid=$!
   (
     sleep "$sec"
-    kill "$pid" 2>/dev/null || true
+    kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   ) &
   watcher=$!
   set +e
   wait "$pid"
-  local ec=$?
+  ec=$?
   set -e
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
+  set +m 2>/dev/null || true
   # 143/137 often means killed by timeout → map to 124 like GNU timeout
   if [[ "$ec" -eq 143 || "$ec" -eq 137 ]]; then
     return 124

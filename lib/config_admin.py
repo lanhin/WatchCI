@@ -61,13 +61,13 @@ GLOBAL_SCHEMA = [
     {
         "key": "PUBLISH_CMD",
         "label": "发布命令",
-        "help": "推送看板时执行的 shell 命令；空则不发布。",
+        "help": "推送看板时执行的 shell 命令（在 SITE_DIR 下执行，源路径用 ./）；空则不发布。",
         "group": "site",
     },
     {
         "key": "AUTO_PUBLISH",
         "label": "自动发布",
-        "help": "每次重建看板后是否自动执行发布命令。",
+        "help": "每次 run 结束更新看板后是否自动执行发布命令（rebuild-site 不会触发）。",
         "group": "site",
     },
     {
@@ -398,13 +398,25 @@ class App:
         except (OSError, ValueError):
             return False
 
-    def _log_finished(self, path: Path) -> bool:
-        # ponytail: scan last 4KiB for finish marker; upgrade to meta-only if runner writes early
+    def _log_run_id(self, path: Path) -> str:
+        stem = path.stem
+        return stem.rsplit("-", 1)[0] if "-" in stem else stem
+
+    def _log_finished(self, path: Path, data_dir: Path | None = None) -> bool:
+        # Meta is authoritative: after timeout, orphan children can keep appending and
+        # bury "=== finished" past any fixed tail window.
+        run_id = self._log_run_id(path)
+        if RUN_ID_RE.match(run_id):
+            meta = (data_dir or self.data_dir()) / "runs" / f"{run_id}.meta.json"
+            if meta.is_file():
+                return True
         try:
             size = path.stat().st_size
             with path.open("rb") as f:
-                if size > 4096:
-                    f.seek(size - 4096)
+                # 64KiB covers post-timeout ctest spill; still cheap
+                window = min(size, 65536)
+                if size > window:
+                    f.seek(size - window)
                 tail = f.read().decode("utf-8", errors="replace")
             return FINISHED_MARK in tail
         except OSError:
@@ -443,9 +455,9 @@ class App:
                 for log in sorted(proj_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
                     if not LOG_NAME_RE.match(log.name):
                         continue
-                    if self._log_finished(log):
+                    if self._log_finished(log, data):
                         continue
-                    run_id = log.stem.rsplit("-", 1)[0] if "-" in log.stem else log.stem
+                    run_id = self._log_run_id(log)
                     st = log.stat()
                     hdr = self._parse_log_header(log)
                     active.append(
@@ -457,6 +469,7 @@ class App:
                             "mtime": int(st.st_mtime),
                             "kind": hdr.get("kind", ""),
                             "ref": hdr.get("ref", ""),
+                            "pr_id": hdr.get("pr_id", ""),
                             "sha": hdr.get("sha", ""),
                             "started": hdr.get("started", ""),
                         }
@@ -581,6 +594,9 @@ class App:
                 continue
             if project and str(meta.get("project") or "") != project:
                 continue
+            sha = str(meta.get("sha") or "")
+            if not sha:
+                continue
             out.append(
                 {
                     "id": meta.get("id") or path.name.removesuffix(".meta.json"),
@@ -588,7 +604,7 @@ class App:
                     "kind": meta.get("kind") or "",
                     "ref": meta.get("ref") or "",
                     "pr_id": meta.get("pr_id"),
-                    "sha": meta.get("sha") or "",
+                    "sha": sha,
                     "status": st,
                     "exit_code": meta.get("exit_code"),
                     "started": meta.get("started"),
@@ -597,9 +613,19 @@ class App:
                 }
             )
         out.sort(key=lambda r: int(r.get("finished") or 0), reverse=True)
+        # same checkout key as _delete_matching_failures — one 重跑 row per SHA
+        seen: set[tuple[str, str, str, str, str]] = set()
+        deduped: list[dict] = []
+        for r in out:
+            pr = "" if r.get("pr_id") in (None, "") else str(r.get("pr_id"))
+            key = (str(r.get("project") or ""), str(r.get("kind") or ""), str(r.get("ref") or ""), pr, str(r["sha"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(r)
         if limit < 1:
             limit = 50
-        return out[:limit]
+        return deduped[:limit]
 
     def _pending_has_dup(self, pending_dir: Path, project: str, kind: str, ref: str, sha: str) -> bool:
         if not pending_dir.is_dir():
