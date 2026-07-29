@@ -89,7 +89,7 @@ AUTO_PUBLISH=false
    - **现场**：轮询跟进进行中的 run 日志（边跑边刷）
    - **可重跑**：失败 / 超时记录一键入队（项目 `ALLOW_MANUAL_RERUN`）
    - **全局 / 项目**：编辑 `config/*.conf`
-   - 监听非本机地址时须设 `ADMIN_TOKEN`（请求头 `X-Admin-Token` 或 `?token=`）
+   - 监听非本机地址时须设 `ADMIN_TOKEN`（仅保护 `/api`；请求头 `X-Admin-Token` 或 `?token=`；浏览器打开 `/?token=…`）
 
 ## 自检
 

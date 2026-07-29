@@ -33,7 +33,7 @@ ADMIN_PID_FILE=
 ADMIN_BIND=127.0.0.1
 # 配置 UI 端口 — 默认 8787。
 ADMIN_PORT=8787
-# 配置 UI 访问令牌 — 请求头 X-Admin-Token 或 ?token=；本机可空。
+# 配置 UI 访问令牌 — 仅保护 /api；请求头 X-Admin-Token 或 ?token=；本机可空。浏览器打开 /?token=… 即可。
 ADMIN_TOKEN=
 # 随守护进程启动配置 UI — start 时是否后台拉起本机配置页。
 ADMIN_ENABLE=true

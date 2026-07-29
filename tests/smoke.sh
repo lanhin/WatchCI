@@ -598,4 +598,60 @@ assert (runs / f"{fail_id3}.meta.json").is_file(), "gate fail must keep record"
 print("manual rerun ok")
 PY
 
+# Admin token: static assets public; /api requires token (css/js must load without ?token=)
+python3 - <<PY
+import importlib.util
+import threading
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+root = Path("$ROOT").resolve()
+spec = importlib.util.spec_from_file_location("config_admin", root / "lib" / "config_admin.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+token = "smoke-admin-token"
+app = mod.App(root, token, root / "data" / "watchci.pid")
+handler = mod.make_handler(app, token, "127.0.0.1")
+ThreadingHTTPServer.allow_reuse_address = True
+server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+port = server.server_address[1]
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+base = f"http://127.0.0.1:{port}"
+
+def get(path, headers=None):
+    req = urllib.request.Request(base + path, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", ""), e.read()
+
+try:
+    code, ctype, body = get("/style.css")
+    assert code == 200, (code, body[:200])
+    assert "text/css" in ctype, ctype
+    assert b"{" in body or b"." in body, "css body empty?"
+
+    code, _, body = get("/api/config")
+    assert code == 401, (code, body)
+
+    code, _, body = get("/api/config", {"X-Admin-Token": token})
+    assert code == 200, (code, body[:200])
+
+    code, _, body = get(f"/api/config?token={token}")
+    assert code == 200, (code, body[:200])
+
+    code, ctype, body = get(f"/?token={token}")
+    assert code == 200, (code, body[:200])
+    assert b"style.css" in body
+    print("admin token static/api auth ok")
+finally:
+    server.shutdown()
+    server.server_close()
+PY
+
 echo "SMOKE OK"

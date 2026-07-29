@@ -115,7 +115,7 @@ GLOBAL_SCHEMA = [
     {
         "key": "ADMIN_TOKEN",
         "label": "配置 UI 访问令牌",
-        "help": "请求头 X-Admin-Token 或 ?token=；本机可空。",
+        "help": "仅保护 /api；请求头 X-Admin-Token 或 ?token=；本机可空。浏览器打开 /?token=… 即可。",
         "group": "admin",
     },
 ]
@@ -848,14 +848,14 @@ def make_handler(app: App, token: str, bind: str):
                 self._json(403, {"error": "非本机监听时必须设置访问令牌"})
                 return False
             got = self.headers.get("X-Admin-Token") or ""
-            if got != token:
-                q = urlparse(self.path).query
-                if f"token={token}" not in q.split("&") and not any(
-                    p == f"token={token}" for p in q.split("&")
-                ):
-                    self._json(401, {"error": "未授权"})
-                    return False
-            return True
+            if got == token:
+                return True
+            # ponytail: parse_qs handles URL-encoded tokens; relative static URLs never carry ?token=
+            qs = parse_qs(urlparse(self.path).query)
+            if (qs.get("token") or [None])[0] == token:
+                return True
+            self._json(401, {"error": "未授权"})
+            return False
 
         def _json(self, code: int, obj) -> None:
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -897,11 +897,12 @@ def make_handler(app: App, token: str, bind: str):
             self.wfile.write(data)
 
         def do_GET(self):  # noqa: N802
-            if not self._check_auth():
-                return
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
+            # Static assets (css/js/svg) must not require ?token= — browsers don't inherit page query.
+            if path.startswith("/api/") and not self._check_auth():
+                return
             if path == "/api/config":
                 self._json(
                     200,
