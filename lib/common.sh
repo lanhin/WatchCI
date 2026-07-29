@@ -6,11 +6,23 @@ export WATCHCI_ROOT
 
 log() {
   local level="$1"; shift
-  local ts
+  local ts line tag
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  echo "[$ts] [$level] $*" >&2
+  line="[$ts] [$level] $*"
+  # color stderr only; keep LOG_FILE plain (NO_COLOR / non-tty → plain)
+  if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+    case "$level" in
+      INFO)  tag=$'\033[1;36m[INFO]\033[0m' ;;
+      WARN)  tag=$'\033[1;33m[WARN]\033[0m' ;;
+      ERROR) tag=$'\033[1;31m[ERROR]\033[0m' ;;
+      *)     tag="[$level]" ;;
+    esac
+    echo "[$ts] $tag $*" >&2
+  else
+    echo "$line" >&2
+  fi
   if [[ -n "${LOG_FILE:-}" ]]; then
-    echo "[$ts] [$level] $*" >>"$LOG_FILE"
+    echo "$line" >>"$LOG_FILE"
   fi
 }
 
