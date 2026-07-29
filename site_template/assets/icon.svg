@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="WatchCI Dashboard">
+  <!-- Results-board mark: slate card + status rows (distinct from admin radar) -->
+  <rect width="32" height="32" rx="8" fill="#1a2332"/>
+  <rect x="6" y="7" width="20" height="4.5" rx="1.25" fill="#3dd68c"/>
+  <rect x="6" y="13.75" width="14" height="4.5" rx="1.25" fill="#5eb1ff"/>
+  <rect x="6" y="20.5" width="17" height="4.5" rx="1.25" fill="#f07178"/>
+  <circle cx="24.5" cy="16" r="2" fill="#ffcc66"/>
+</svg>

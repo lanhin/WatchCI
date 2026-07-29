@@ -63,6 +63,7 @@ def render_run_page(run: dict, site_dir: Path) -> None:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Run {html.escape(run_id)} — WatchCI</title>
+<link rel="icon" href="../../assets/icon.svg" type="image/svg+xml"/>
 <link rel="stylesheet" href="../../assets/style.css"/>
 </head>
 <body>
@@ -137,12 +138,18 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>WatchCI Dashboard</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml"/>
 <link rel="stylesheet" href="assets/style.css"/>
 </head>
 <body>
 <header class="top">
-  <h1>WatchCI</h1>
-  <p class="sub">Static CI dashboard</p>
+  <div class="brand">
+    <img src="assets/icon.svg" alt="" width="36" height="36"/>
+    <div>
+      <h1>WatchCI</h1>
+      <p class="sub">Static CI dashboard</p>
+    </div>
+  </div>
 </header>
 <section class="projects">
 {"".join(cards) if cards else "<p>No runs yet.</p>"}

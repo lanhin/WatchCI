@@ -18,8 +18,18 @@ body {
   min-height: 100vh;
   padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem;
 }
+.top .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.top .brand img {
+  flex-shrink: 0;
+  border-radius: 8px;
+}
 .top h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.02em; }
 .top .sub, .top a { color: var(--muted); }
+.top .sub { margin: 0.15rem 0 0; }
 .projects {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
