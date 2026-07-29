@@ -7,6 +7,7 @@ import json
 import os
 import random
 import re
+import shlex
 import signal
 import tempfile
 import time
@@ -229,6 +230,13 @@ GLOBAL_FIELDS = [f["key"] for f in GLOBAL_SCHEMA]
 PROJECT_FIELDS = [f["key"] for f in PROJECT_SCHEMA]
 
 
+def _conf_assign(k: str, v: str) -> str:
+    # bash sources conf; spaces/$/` etc must be quoted (e.g. PUBLISH_CMD with rsync flags).
+    if v and re.search(r"""[\s'"$`\\;&|<>()!]""", v):
+        return f"{k}={shlex.quote(v)}"
+    return f"{k}={v}"
+
+
 def dump_conf(data: dict[str, str], schema: list[dict]) -> str:
     """Write KEY=value with Chinese comments from schema; group breaks as blank lines."""
     lines = ["# 由 WatchCI 配置界面管理", ""]
@@ -244,14 +252,14 @@ def dump_conf(data: dict[str, str], schema: list[dict]) -> str:
         label = field.get("label") or k
         help_ = field.get("help") or ""
         lines.append(f"# {label} — {help_}" if help_ else f"# {label}")
-        lines.append(f"{k}={data[k]}")
+        lines.append(_conf_assign(k, data[k]))
         seen.add(k)
     extras = [(k, v) for k, v in data.items() if k not in seen and not str(k).startswith("_")]
     if extras:
         lines.append("")
         lines.append("# 未在 schema 中的项")
         for k, v in extras:
-            lines.append(f"{k}={v}")
+            lines.append(_conf_assign(k, v))
     lines.append("")
     return "\n".join(lines)
 
