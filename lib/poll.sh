@@ -25,11 +25,11 @@ ensure_clone() {
   git clone "$REPO_URL" "$CLONE_DIR" || die "git clone failed for $NAME"
 }
 
-# Expand BRANCHES patterns against remote refs after fetch.
-# BRANCHES is comma-separated; supports git for-each-ref glob (*).
-match_remote_branches() {
-  local patterns="$1"
-  local pat short
+# True if branch name matches BRANCHES (comma-separated; supports * glob).
+branch_matches_watch() {
+  local name="$1"
+  local patterns="${2:-${BRANCHES:-main}}"
+  local pat
   local -a pats=()
   local oldifs="$IFS"
   IFS=','
@@ -39,17 +39,25 @@ match_remote_branches() {
   if [[ ${#pats[@]} -eq 0 || -z "${pats[0]:-}" ]]; then
     pats=(main)
   fi
+  for pat in "${pats[@]}"; do
+    pat="${pat#"${pat%%[![:space:]]*}"}"
+    pat="${pat%"${pat##*[![:space:]]}"}"
+    [[ -z "$pat" ]] && continue
+    # shellcheck disable=SC2254
+    case "$name" in
+      $pat) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Expand BRANCHES patterns against remote refs after fetch.
+match_remote_branches() {
+  local patterns="$1"
+  local short
   while IFS= read -r short; do
     [[ -z "$short" || "$short" == "HEAD" ]] && continue
-    for pat in "${pats[@]}"; do
-      pat="${pat#"${pat%%[![:space:]]*}"}"
-      pat="${pat%"${pat##*[![:space:]]}"}"
-      [[ -z "$pat" ]] && continue
-      # shellcheck disable=SC2254
-      case "$short" in
-        $pat) echo "$short" ;;
-      esac
-    done
+    branch_matches_watch "$short" "$patterns" && echo "$short"
   done < <(git -C "$CLONE_DIR" for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sed 's|^origin/||') | sort -u
 }
 
@@ -75,14 +83,17 @@ poll_branches() {
 poll_prs() {
   [[ "${WATCH_PRS}" == "true" || "${WATCH_PRS}" == "1" ]] || return 0
   load_adapter
-  local line pr_id head_sha branch url old
-  while IFS=$'\t' read -r pr_id head_sha branch url; do
+  local pr_id head_sha branch url base old
+  while IFS=$'\t' read -r pr_id head_sha branch url base; do
     [[ -z "$pr_id" || -z "$head_sha" ]] && continue
-    # optional label filter left to adapter if PR_LABELS set
+    # Only PRs whose target (base) is in BRANCHES — same watch list as push.
+    if ! branch_matches_watch "${base:-}"; then
+      continue
+    fi
     old="$(state_get_sha pr "$pr_id")"
     if [[ "$old" != "$head_sha" ]]; then
-      info "pr change $NAME #$pr_id ${old:0:8} -> ${head_sha:0:8}"
-      event_enqueue "$NAME" pr "${branch:-pr-$pr_id}" "$head_sha" "$pr_id" poll
+      info "pr change $NAME #$pr_id base=${base:-?} ${old:0:8} -> ${head_sha:0:8}"
+      event_enqueue "$NAME" pr "${branch:-pr-$pr_id}" "$head_sha" "$pr_id" poll "$base"
       state_set pr "$pr_id" "$head_sha"
     fi
   done < <(provider_list_open_prs)

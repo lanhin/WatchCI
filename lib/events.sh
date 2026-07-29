@@ -30,11 +30,12 @@ event_drop_stale_pending() {
   done
 }
 
-# Enqueue event. Args: project kind ref sha [pr_id] [source]
+# Enqueue event. Args: project kind ref sha [pr_id] [source] [base]
 event_enqueue() {
   local project="$1" kind="$2" ref="$3" sha="$4"
   local pr_id="${5:-}"
   local source="${6:-poll}"
+  local base="${7:-}"
   local id path
   id="$(make_id)"
   path="$(events_pending_dir)/${id}.json"
@@ -59,12 +60,13 @@ event_enqueue() {
       --arg sha "$sha" \
       --arg pr_id "$pr_id" \
       --arg source "$source" \
+      --arg base "$base" \
       --argjson ts "$(epoch_now)" \
-      '{project:$project, kind:$kind, ref:$ref, pr_id:(if $pr_id=="" then null else $pr_id end), sha:$sha, source:$source, ts:$ts}' \
+      '{project:$project, kind:$kind, ref:$ref, pr_id:(if $pr_id=="" then null else $pr_id end), sha:$sha, source:$source, base:(if $base=="" then null else $base end), ts:$ts}' \
       >"$path"
   else
     cat >"$path" <<EOF
-{"project": "$project", "kind": "$kind", "ref": "$ref", "pr_id": $( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ), "sha": "$sha", "source": "$source", "ts": $(epoch_now)}
+{"project": "$project", "kind": "$kind", "ref": "$ref", "pr_id": $( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ), "sha": "$sha", "source": "$source", "base": $( [[ -n "$base" ]] && echo "\"$base\"" || echo null ), "ts": $(epoch_now)}
 EOF
   fi
   info "enqueued event $id project=$project kind=$kind ref=$ref sha=${sha:0:8}"

@@ -35,7 +35,8 @@ provider_list_open_prs() {
         (.number // .id),
         (.head.sha // .sha // ""),
         (.head.ref // .source_branch // ""),
-        (.html_url // .url // "")
+        (.html_url // .url // ""),
+        (.base.ref // .target_branch // "")
       ] | @tsv
     '
     [[ "$count" -lt 100 ]] && break

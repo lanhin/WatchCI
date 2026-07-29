@@ -172,7 +172,7 @@ PROJECT_SCHEMA = [
     {
         "key": "BRANCHES",
         "label": "监听分支",
-        "help": "逗号分隔；空则按 main。",
+        "help": "逗号分隔；空则按 main。推送与 PR 合入目标均按此过滤。",
         "group": "watch",
     },
     {

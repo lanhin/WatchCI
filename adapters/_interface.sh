@@ -6,8 +6,9 @@
 #   value arguments for curl, e.g. multiple -H via provider_curl_auth helper.
 #
 # provider_list_open_prs
-#   Prints TSV lines: pr_id \t head_sha \t branch \t url
+#   Prints TSV lines: pr_id \t head_sha \t head_branch \t url \t base_branch
 #   Uses env from loaded project: OWNER REPO API_BASE TOKEN_ENV PROJECT_ID PR_LABELS
+#   Caller filters by base_branch against BRANCHES.
 #
 # provider_pr_head_sha <id>   (optional)
 #   Prints head sha for one PR/MR.

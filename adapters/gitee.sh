@@ -24,7 +24,7 @@ provider_list_open_prs() {
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -eq 0 ]] && break
     echo "$json" | jq -r '
-      .[] | [.number, .head.sha, .head.ref, (.html_url // .url // "")] | @tsv
+      .[] | [.number, .head.sha, .head.ref, (.html_url // .url // ""), (.base.ref // "")] | @tsv
     '
     [[ "$count" -lt 100 ]] && break
     page=$((page + 1))

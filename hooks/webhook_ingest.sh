@@ -49,13 +49,34 @@ case "$PROVIDER/$EVENT" in
     pr_id="$(echo "$payload" | jq -r '.pull_request.number // empty')"
     sha="$(echo "$payload" | jq -r '.pull_request.head.sha // empty')"
     branch="$(echo "$payload" | jq -r '.pull_request.head.ref // empty')"
+    base_ref="$(echo "$payload" | jq -r '.pull_request.base.ref // empty')"
+    # Optional: WATCHCI_BRANCHES=main,release/* — skip PRs not targeting watched bases.
+    if [[ -n "${WATCHCI_BRANCHES:-}" && -n "$base_ref" ]]; then
+      matched=0
+      oldifs="$IFS"
+      IFS=','
+      # shellcheck disable=SC2206
+      pats=($WATCHCI_BRANCHES)
+      IFS="$oldifs"
+      for pat in "${pats[@]}"; do
+        pat="${pat#"${pat%%[![:space:]]*}"}"
+        pat="${pat%"${pat##*[![:space:]]}"}"
+        [[ -z "$pat" ]] && continue
+        # shellcheck disable=SC2254
+        case "$base_ref" in
+          $pat) matched=1; break ;;
+        esac
+      done
+      [[ "$matched" -eq 1 ]] || exit 0
+    fi
     jq -n \
       --arg project "$PROJECT" \
       --arg ref "$branch" \
       --arg sha "$sha" \
       --arg pr_id "$pr_id" \
+      --arg base "$base_ref" \
       --argjson ts "$(date +%s)" \
-      '{project:$project, kind:"pr", ref:$ref, pr_id:$pr_id, sha:$sha, source:"webhook", ts:$ts}'
+      '{project:$project, kind:"pr", ref:$ref, pr_id:$pr_id, sha:$sha, source:"webhook", base:(if $base=="" then null else $base end), ts:$ts}'
     ;;
   *)
     # Skeleton for gitee/gitlab/gitcode — map similarly when needed.

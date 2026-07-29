@@ -66,8 +66,9 @@ _clone_cleanup() {
 }
 
 # Fetch + detach to event sha. PR: merge into base (conflict → fail); detached only (no temp branch).
+# base_override: PR target branch from event (preferred over first BRANCHES entry).
 _checkout_sha() {
-  local sha="$1" kind="$2" pr_id="$3" log_path="$4"
+  local sha="$1" kind="$2" pr_id="$3" log_path="$4" base_override="${5:-}"
   local pr_ref base
 
   if ! git -C "$CLONE_DIR" fetch --prune origin >>"$log_path" 2>&1; then
@@ -82,7 +83,7 @@ _checkout_sha() {
       echo "pr fetch failed ref=$pr_ref" >>"$log_path"
       return 1
     fi
-    base="$(_pr_base_branch)"
+    base="${base_override:-$(_pr_base_branch)}"
     echo "pr merge onto origin/$base" >>"$log_path"
     if ! git -C "$CLONE_DIR" rev-parse --verify "origin/$base" >/dev/null 2>&1; then
       echo "pr base missing: origin/$base" >>"$log_path"
@@ -113,13 +114,15 @@ _checkout_sha() {
 # Execute one event file. Returns 0 always (failure recorded in run meta).
 run_event() {
   local event_path="$1"
-  local project kind ref sha pr_id
+  local project kind ref sha pr_id base
   project="$(event_field "$event_path" project)"
   kind="$(event_field "$event_path" kind)"
   ref="$(event_field "$event_path" ref)"
   sha="$(event_field "$event_path" sha)"
   pr_id="$(event_field "$event_path" pr_id)"
   [[ "$pr_id" == "null" ]] && pr_id=
+  base="$(event_field "$event_path" base)"
+  [[ "$base" == "null" ]] && base=
 
   local pfile
   pfile="$(_find_project_file_by_name "$project")" || {
@@ -176,7 +179,7 @@ run_event() {
     echo "=== checkout ==="
   } >"$log_path"
 
-  if ! _checkout_sha "$sha" "$kind" "$pr_id" "$log_path"; then
+  if ! _checkout_sha "$sha" "$kind" "$pr_id" "$log_path" "$base"; then
     exit_code=1
   else
     local script_path cwd

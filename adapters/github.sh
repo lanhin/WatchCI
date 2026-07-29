@@ -35,7 +35,7 @@ provider_list_open_prs() {
         ($labels | length == 0) or
         (($labels | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))) as $want
          | ($want | length == 0) or any(.labels[].name; . as $n | $want | index($n)));
-      .[] | select(ok) | [.number, .head.sha, .head.ref, .html_url] | @tsv
+      .[] | select(ok) | [.number, .head.sha, .head.ref, .html_url, (.base.ref // "")] | @tsv
     '
     [[ "$count" -lt 100 ]] && break
     page=$((page + 1))

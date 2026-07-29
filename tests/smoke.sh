@@ -219,6 +219,28 @@ bash -c '
   echo "project poll isolation ok"
 '
 
+# BRANCHES filters PR by base (target), not head
+bash -c '
+  source "'"$ROOT"'/lib/poll.sh"
+  BRANCHES=main
+  branch_matches_watch main || { echo "FAIL: main should match"; exit 1; }
+  branch_matches_watch develop && { echo "FAIL: develop should not match BRANCHES=main"; exit 1; }
+  BRANCHES="main, release/*"
+  branch_matches_watch release/1.0 || { echo "FAIL: release/1.0 should match"; exit 1; }
+  branch_matches_watch feature/x && { echo "FAIL: feature/x should not match"; exit 1; }
+  echo "branch_matches_watch ok"
+'
+
+# webhook: PR not targeting watched base is ignored
+pr_payload='{"action":"opened","pull_request":{"number":110,"head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"feat/x"},"base":{"ref":"develop"}}}'
+out="$(echo "$pr_payload" | WATCHCI_PROJECT=smoke WATCHCI_BRANCHES=main "$ROOT/hooks/webhook_ingest.sh" github pull_request || true)"
+[[ -z "$out" ]] || { echo "FAIL: PR to develop should be ignored when BRANCHES=main"; echo "$out"; exit 1; }
+pr_payload_ok='{"action":"opened","pull_request":{"number":1,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc","ref":"feat/y"},"base":{"ref":"main"}}}'
+out="$(echo "$pr_payload_ok" | WATCHCI_PROJECT=smoke WATCHCI_BRANCHES=main "$ROOT/hooks/webhook_ingest.sh" github pull_request)"
+echo "$out" | grep -q '"kind": "pr"' || echo "$out" | grep -q '"kind":"pr"' || { echo "FAIL: PR to main should enqueue"; echo "$out"; exit 1; }
+echo "$out" | grep -q '"base": "main"' || echo "$out" | grep -q '"base":"main"' || { echo "FAIL: missing base=main"; echo "$out"; exit 1; }
+echo "webhook pr base filter ok"
+
 # webhook ingest smoke
 payload='{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 out="$(echo "$payload" | WATCHCI_PROJECT=smoke "$ROOT/hooks/webhook_ingest.sh" github push)"
