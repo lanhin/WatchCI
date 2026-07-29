@@ -114,6 +114,10 @@ assert any(f["key"] == "ALLOW_MANUAL_RERUN" for f in mod.PROJECT_SCHEMA)
 out = mod.dump_conf({"NAME": "x", "ENABLED": "true"}, mod.PROJECT_SCHEMA)
 assert "项目名称" in out or "NAME=x" in out
 assert "# " in out
+# SCRIPT with args must be quoted for bash source; round-trip keeps value
+quoted = mod.dump_conf({"SCRIPT": "./ci.sh --quick --flag=1"}, mod.PROJECT_SCHEMA)
+assert "SCRIPT='./ci.sh --quick --flag=1'" in quoted or 'SCRIPT="./ci.sh' in quoted
+assert mod.parse_conf(quoted)["SCRIPT"] == "./ci.sh --quick --flag=1"
 print("config parse ok")
 
 # Live floor: unfinished log detection (used by /api/live)
@@ -174,6 +178,39 @@ except ValueError:
     pass
 print("live path reject ok")
 PY
+
+# SCRIPT path + args split (first token resolves; rest passed through)
+bash -c '
+  set -euo pipefail
+  ROOT="'"$ROOT"'"
+  TMP="'"$TMP"'"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/common.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/config.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/runner.sh"
+  CLONE_DIR="$TMP/script-args-clone"
+  mkdir -p "$CLONE_DIR"
+  printf "%s\n" "#!/usr/bin/env bash" "printf \"%s\\n\" \"\$@\"" >"$CLONE_DIR/ci.sh"
+  chmod +x "$CLONE_DIR/ci.sh"
+  SCRIPT="./ci.sh --mode full"
+  _SCRIPT_CMDLINE=()
+  _script_cmdline
+  [[ "${_SCRIPT_CMDLINE[0]}" == "$CLONE_DIR/ci.sh" || "${_SCRIPT_CMDLINE[0]}" == "$CLONE_DIR/./ci.sh" ]] \
+    || { echo "FAIL: path ${_SCRIPT_CMDLINE[0]}"; exit 1; }
+  [[ "${#_SCRIPT_CMDLINE[@]}" -eq 3 && "${_SCRIPT_CMDLINE[1]}" == "--mode" && "${_SCRIPT_CMDLINE[2]}" == "full" ]] \
+    || { echo "FAIL: args ${_SCRIPT_CMDLINE[*]}"; exit 1; }
+  # execute via same argv shape runner uses
+  got0=
+  got1=
+  {
+    read -r got0
+    read -r got1
+  } < <(bash "${_SCRIPT_CMDLINE[@]}")
+  [[ "$got0" == "--mode" && "$got1" == "full" ]] || { echo "FAIL: exec got0=$got0 got1=$got1"; exit 1; }
+  echo "script args ok"
+'
 
 # run_with_timeout must kill and return 124
 bash -c '

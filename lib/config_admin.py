@@ -191,7 +191,7 @@ PROJECT_SCHEMA = [
     {
         "key": "SCRIPT",
         "label": "CI 脚本",
-        "help": "相对仓库根或绝对路径；必填。",
+        "help": "相对仓库根或绝对路径，可跟参数（空格分隔，如 ./ci.sh --quick）；路径本身勿含空格；必填。",
         "group": "run",
     },
     {

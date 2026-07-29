@@ -33,6 +33,22 @@ _resolve_script() {
   fi
 }
 
+# Fill _SCRIPT_CMDLINE=(resolved_path [args...]) from SCRIPT.
+# ponytail: first whitespace token = path; rest = args. Path itself must not contain spaces.
+_script_cmdline() {
+  local file rest
+  file="${SCRIPT%%[[:space:]]*}"
+  rest="${SCRIPT#"$file"}"
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  [[ -n "$file" ]] || return 1
+  _SCRIPT_CMDLINE=("$( _resolve_script "$file" )")
+  if [[ -n "$rest" ]]; then
+    local -a args
+    read -r -a args <<< "$rest"
+    _SCRIPT_CMDLINE+=("${args[@]}")
+  fi
+}
+
 # Remote ref that carries a PR/MR head commit (API sha alone is not enough to fetch).
 _pr_head_ref() {
   local id="$1"
@@ -183,40 +199,46 @@ run_event() {
     exit_code=1
   else
     local script_path cwd
-    script_path="$(_resolve_script "$SCRIPT")"
-    cwd="$CLONE_DIR"
-    if [[ -n "${WORKDIR:-}" ]]; then
-      if [[ "$WORKDIR" = /* ]]; then
-        cwd="$WORKDIR"
-      else
-        cwd="$CLONE_DIR/$WORKDIR"
-      fi
-    fi
-    {
-      echo "=== script $script_path (cwd=$cwd timeout_sec=$TIMEOUT_SEC) ==="
-    } >>"$log_path"
-    if [[ ! -f "$script_path" ]]; then
-      echo "script not found: $script_path" >>"$log_path"
+    _SCRIPT_CMDLINE=()
+    if ! _script_cmdline; then
+      echo "SCRIPT empty/invalid: ${SCRIPT:-}" >>"$log_path"
       exit_code=127
     else
-      chmod +x "$script_path" 2>/dev/null || true
-      # duration / timeout apply to script only (not clone/checkout)
-      start_epoch="$(epoch_now)"
-      set +e
-      (
-        cd "$cwd" || exit 1
-        export WATCHCI_SHA="$sha"
-        export WATCHCI_REF="$ref"
-        export WATCHCI_KIND="$kind"
-        export WATCHCI_PR_ID="${pr_id:-}"
-        export WATCHCI_PROJECT="$NAME"
-        export WATCHCI_LOG="$log_path"
-        export WATCHCI_RUN_ID="$run_id"
-        export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
-        run_with_timeout "$TIMEOUT_SEC" bash "$script_path"
-      ) >>"$log_path" 2>&1
-      exit_code=$?
-      set -e
+      script_path="${_SCRIPT_CMDLINE[0]}"
+      cwd="$CLONE_DIR"
+      if [[ -n "${WORKDIR:-}" ]]; then
+        if [[ "$WORKDIR" = /* ]]; then
+          cwd="$WORKDIR"
+        else
+          cwd="$CLONE_DIR/$WORKDIR"
+        fi
+      fi
+      {
+        echo "=== script ${_SCRIPT_CMDLINE[*]} (cwd=$cwd timeout_sec=$TIMEOUT_SEC) ==="
+      } >>"$log_path"
+      if [[ ! -f "$script_path" ]]; then
+        echo "script not found: $script_path" >>"$log_path"
+        exit_code=127
+      else
+        chmod +x "$script_path" 2>/dev/null || true
+        # duration / timeout apply to script only (not clone/checkout)
+        start_epoch="$(epoch_now)"
+        set +e
+        (
+          cd "$cwd" || exit 1
+          export WATCHCI_SHA="$sha"
+          export WATCHCI_REF="$ref"
+          export WATCHCI_KIND="$kind"
+          export WATCHCI_PR_ID="${pr_id:-}"
+          export WATCHCI_PROJECT="$NAME"
+          export WATCHCI_LOG="$log_path"
+          export WATCHCI_RUN_ID="$run_id"
+          export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
+          run_with_timeout "$TIMEOUT_SEC" bash "${_SCRIPT_CMDLINE[@]}"
+        ) >>"$log_path" 2>&1
+        exit_code=$?
+        set -e
+      fi
     fi
   fi
 
