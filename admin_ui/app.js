@@ -23,10 +23,25 @@
   ]);
 
   const $ = (id) => document.getElementById(id);
-  const msg = (id, text, err = false) => {
+  const msgTimers = Object.create(null);
+  // ponytail: success flashes auto-clear; errors / sticky status stay until overwritten
+  const msg = (id, text, err = false, ttlMs = 0) => {
     const el = $(id);
+    if (msgTimers[id]) {
+      clearTimeout(msgTimers[id]);
+      delete msgTimers[id];
+    }
     el.textContent = text || "";
     el.classList.toggle("err", !!err);
+    if (ttlMs > 0 && text) {
+      msgTimers[id] = setTimeout(() => {
+        if (el.textContent === text) {
+          el.textContent = "";
+          el.classList.remove("err");
+        }
+        delete msgTimers[id];
+      }, ttlMs);
+    }
   };
 
   const setTab = (which) => {
@@ -561,13 +576,19 @@
   };
 
   $("save-global").onclick = async () => {
+    msg("global-msg", "");
     const res = await fetch("/api/global", {
       method: "PUT",
       headers: headers(),
       body: JSON.stringify(formData($("form-global"))),
     });
     const body = await res.json().catch(() => ({}));
-    msg("global-msg", res.ok ? "已保存并请求守护进程重载" : body.error || "失败", !res.ok);
+    msg(
+      "global-msg",
+      res.ok ? "已保存并请求守护进程重载" : body.error || "失败",
+      !res.ok,
+      res.ok ? 4000 : 0
+    );
   };
 
   const NAME_RE = /^[A-Za-z0-9_-]+$/;
@@ -627,6 +648,7 @@
   };
 
   $("save-project").onclick = async () => {
+    msg("project-msg", "");
     const data = formData($("form-project"));
     const name = data.NAME || currentProject;
     const creating = $("form-project").dataset.create === "1";
@@ -644,7 +666,7 @@
       currentProject = name;
       $("project-title").textContent = name;
       $("project-sub").textContent = "仓库、分支与执行脚本";
-      msg("project-msg", "已保存并请求重载");
+      msg("project-msg", "已保存并请求重载", false, 4000);
       await load();
       markActive(name);
     } else {
