@@ -55,20 +55,22 @@ provider_pr_head_sha() {
 }
 
 # Upsert sticky WatchCI comment on a PR (GitCode pulls comments API).
-# Docs: GET/POST .../pulls/{number}/comments ; PATCH .../pulls/comments/{id}
+# Auth: access_token query (same as official curl), not Bearer.
+# GET/POST .../pulls/{number}/comments ; PATCH .../pulls/comments/{id}
 provider_upsert_pr_comment() {
   local pr_id="$1" body="$2"
-  local base owner repo page json count cid payload
+  local base owner repo tok page json count cid payload url
   base="$(provider_default_api_base)"
   owner="${OWNER:?OWNER required}"
   repo="${REPO:?REPO required}"
+  tok="$(provider_token)"
   [[ -n "$pr_id" ]] || return 1
   cid=""
   page=1
   while [[ "$page" -le 5 ]]; do
-    # shellcheck disable=SC2046
-    json="$(provider_api_get $(provider_auth_args) \
-      "${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments?per_page=100&page=${page}&comment_type=pr_comment")" || return 1
+    url="${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments?page=${page}&per_page=100&comment_type=pr_comment"
+    [[ -n "$tok" ]] && url="${url}&access_token=${tok}"
+    json="$(provider_api_get -H "Accept: application/json" "$url")" || return 1
     cid="$(echo "$json" | provider_comment_find_id)"
     [[ -n "$cid" ]] && break
     count="$(echo "$json" | jq 'length')"
@@ -77,16 +79,20 @@ provider_upsert_pr_comment() {
   done
   payload="$(jq -n --arg body "$body" '{body:$body}')"
   if [[ -n "$cid" ]]; then
-    # shellcheck disable=SC2046
-    provider_api_json $(provider_auth_args) -X PATCH \
+    url="${base}/repos/${owner}/${repo}/pulls/comments/${cid}"
+    [[ -n "$tok" ]] && url="${url}?access_token=${tok}"
+    provider_api_json -X PATCH \
+      -H "Accept: application/json" \
       -H "Content-Type: application/json" \
       -d "$payload" \
-      "${base}/repos/${owner}/${repo}/pulls/comments/${cid}" >/dev/null
+      "$url" >/dev/null
   else
-    # shellcheck disable=SC2046
-    provider_api_json $(provider_auth_args) -X POST \
+    url="${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments"
+    [[ -n "$tok" ]] && url="${url}?access_token=${tok}"
+    provider_api_json -X POST \
+      -H "Accept: application/json" \
       -H "Content-Type: application/json" \
       -d "$payload" \
-      "${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments" >/dev/null
+      "$url" >/dev/null
   fi
 }
