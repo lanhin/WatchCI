@@ -8,6 +8,26 @@ CONFIG_DIR="${CONFIG_DIR:-$WATCHCI_ROOT/config}"
 GLOBAL_CONF="${GLOBAL_CONF:-$CONFIG_DIR/watchci.conf}"
 PROJECTS_DIR="${PROJECTS_DIR:-$CONFIG_DIR/projects}"
 
+# Hard cap for FAIL_RETRIES / DEFAULT_FAIL_RETRIES (0..FAIL_RETRIES_MAX).
+FAIL_RETRIES_MAX=8
+
+# Clamp $1 into 0..FAIL_RETRIES_MAX; on invalid/out-of-range print warn via $2 label and use $3 fallback.
+# Sets _CLAMPED_RETRIES. Invalid (non-int / negative) → fallback; >MAX → MAX.
+_clamp_fail_retries() {
+  local raw="$1" label="$2" fallback="$3"
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    if [[ "$raw" -gt "$FAIL_RETRIES_MAX" ]]; then
+      warn "$label=$raw exceeds max $FAIL_RETRIES_MAX, clamp to $FAIL_RETRIES_MAX"
+      _CLAMPED_RETRIES="$FAIL_RETRIES_MAX"
+    else
+      _CLAMPED_RETRIES="$raw"
+    fi
+  else
+    warn "$label=$raw invalid, fallback $fallback"
+    _CLAMPED_RETRIES="$fallback"
+  fi
+}
+
 # Defaults applied after sourcing global conf.
 _apply_global_defaults() {
   DATA_DIR="${DATA_DIR:-$WATCHCI_ROOT/data}"
@@ -18,6 +38,9 @@ _apply_global_defaults() {
   if ! [[ "$DEFAULT_TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
     DEFAULT_TIMEOUT_SEC=1800
   fi
+  DEFAULT_FAIL_RETRIES="${DEFAULT_FAIL_RETRIES:-1}"
+  _clamp_fail_retries "$DEFAULT_FAIL_RETRIES" "DEFAULT_FAIL_RETRIES" 1
+  DEFAULT_FAIL_RETRIES="$_CLAMPED_RETRIES"
   SITE_DIR="${SITE_DIR:-$DATA_DIR/site}"
   [[ "$SITE_DIR" = /* ]] || SITE_DIR="$WATCHCI_ROOT/$SITE_DIR"
   PUBLISH_CMD="${PUBLISH_CMD:-}"
@@ -29,7 +52,7 @@ _apply_global_defaults() {
   ADMIN_PORT="${ADMIN_PORT:-8787}"
   ADMIN_TOKEN="${ADMIN_TOKEN:-}"
   ADMIN_ENABLE="${ADMIN_ENABLE:-true}"
-  export DATA_DIR POLL_INTERVAL_SEC MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC
+  export DATA_DIR POLL_INTERVAL_SEC MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC DEFAULT_FAIL_RETRIES
   export SITE_DIR PUBLISH_CMD AUTO_PUBLISH
   export PID_FILE LOG_FILE ADMIN_PID_FILE
   export ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_ENABLE
@@ -43,7 +66,7 @@ _apply_global_defaults() {
 _ENV_OVERRIDE_KEYS=(
   ADMIN_ENABLE ADMIN_BIND ADMIN_PORT ADMIN_TOKEN ADMIN_PID_FILE
   POLL_INTERVAL_SEC DATA_DIR SITE_DIR PUBLISH_CMD AUTO_PUBLISH
-  PID_FILE LOG_FILE MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC
+  PID_FILE LOG_FILE MAX_PARALLEL_RUNS DEFAULT_TIMEOUT_SEC DEFAULT_FAIL_RETRIES
 )
 : "${_ENV_OVERRIDES_CAPTURED:=0}"
 
@@ -110,7 +133,7 @@ load_project_file() {
   local _saved_poll="${POLL_INTERVAL_SEC:-60}"
   # Reset known keys so stale values don't leak between projects.
   NAME= PROVIDER= REPO_URL= API_BASE= OWNER= REPO= BRANCHES=
-  WATCH_PRS=true PR_LABELS= SCRIPT= WORKDIR= TIMEOUT_SEC=
+  WATCH_PRS=true PR_LABELS= SCRIPT= WORKDIR= TIMEOUT_SEC= FAIL_RETRIES=
   TOKEN_ENV= CLONE_DIR= ENABLED=true PROJECT_ID= ALLOW_MANUAL_RERUN=true
   # shellcheck disable=SC1090
   set -a
@@ -129,13 +152,16 @@ load_project_file() {
     warn "project $NAME: invalid TIMEOUT_SEC=$TIMEOUT_SEC, fallback $DEFAULT_TIMEOUT_SEC"
     TIMEOUT_SEC="$DEFAULT_TIMEOUT_SEC"
   fi
+  FAIL_RETRIES="${FAIL_RETRIES:-$DEFAULT_FAIL_RETRIES}"
+  _clamp_fail_retries "$FAIL_RETRIES" "project $NAME: FAIL_RETRIES" "$DEFAULT_FAIL_RETRIES"
+  FAIL_RETRIES="$_CLAMPED_RETRIES"
   if [[ -z "${CLONE_DIR:-}" ]]; then
     CLONE_DIR="$DATA_DIR/clones/$NAME"
   elif [[ "$CLONE_DIR" != /* ]]; then
     CLONE_DIR="$WATCHCI_ROOT/$CLONE_DIR"
   fi
   export NAME PROVIDER REPO_URL API_BASE OWNER REPO BRANCHES WATCH_PRS PR_LABELS
-  export SCRIPT WORKDIR TIMEOUT_SEC TOKEN_ENV CLONE_DIR ENABLED PROJECT_ID
+  export SCRIPT WORKDIR TIMEOUT_SEC FAIL_RETRIES TOKEN_ENV CLONE_DIR ENABLED PROJECT_ID
   export ALLOW_MANUAL_RERUN POLL_INTERVAL_SEC
 }
 

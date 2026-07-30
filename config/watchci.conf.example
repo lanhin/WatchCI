@@ -8,6 +8,8 @@ POLL_INTERVAL_SEC=60
 MAX_PARALLEL_RUNS=1
 # 默认超时（秒） — 项目未设 TIMEOUT_SEC 时使用。
 DEFAULT_TIMEOUT_SEC=1800
+# 默认失败重试次数 — 项目未设 FAIL_RETRIES 时使用；失败后再试次数，默认 1，最大 8。
+DEFAULT_FAIL_RETRIES=1
 
 # —— 看板发布 ——
 # 看板目录 — 静态结果看板输出目录；空则 data/site。

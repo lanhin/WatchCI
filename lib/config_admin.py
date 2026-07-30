@@ -54,6 +54,12 @@ GLOBAL_SCHEMA = [
         "group": "runtime",
     },
     {
+        "key": "DEFAULT_FAIL_RETRIES",
+        "label": "默认失败重试次数",
+        "help": "项目未设 FAIL_RETRIES 时使用；失败后再试次数，默认 1，最大 8。",
+        "group": "runtime",
+    },
+    {
         "key": "SITE_DIR",
         "label": "看板目录",
         "help": "静态结果看板输出目录；空则 data/site。",
@@ -204,6 +210,12 @@ PROJECT_SCHEMA = [
         "key": "TIMEOUT_SEC",
         "label": "超时（秒）",
         "help": "空则用全局默认超时。",
+        "group": "run",
+    },
+    {
+        "key": "FAIL_RETRIES",
+        "label": "失败重试次数",
+        "help": "空则用全局；0 不重试；最大 8。失败后立刻原地再跑，不入队尾。",
         "group": "run",
     },
     {

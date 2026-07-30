@@ -46,8 +46,8 @@ export GITHUB_TOKEN=...   # 对应项目 TOKEN_ENV 指向的环境变量名，�
 
 ## 配置要点
 
-- **全局** `config/watchci.conf`：轮询间隔、默认超时、看板发布、本机配置 UI。
-- **项目** `config/projects/*.conf`：仓库、监听分支/PR、CI 脚本；超时未写则用全局 `DEFAULT_TIMEOUT_SEC`。
+- **全局** `config/watchci.conf`：轮询间隔、默认超时、默认失败重试、看板发布、本机配置 UI。
+- **项目** `config/projects/*.conf`：仓库、监听分支/PR、CI 脚本；超时未写则用全局 `DEFAULT_TIMEOUT_SEC`；失败重试未写则用全局 `DEFAULT_FAIL_RETRIES`（默认 1、最大 8），失败后立刻原地再跑，不入队尾。
 - **令牌**：项目里只写环境变量名（`TOKEN_ENV`），令牌本身放在环境变量中。
 - 轮询间隔只有全局一份；项目 conf 里即使写了 `POLL_INTERVAL_SEC` 也不会生效。
 - 字段说明见 `config/watchci.conf.example`、`config/projects/example.conf`，或本机配置 UI（中文标签 + 英文键名提示）。

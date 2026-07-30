@@ -186,12 +186,14 @@ run_event() {
   info "run $run_id project=$NAME kind=$kind ref=$ref sha=${sha:0:8}"
   start_epoch="$(epoch_now)"
   exit_code=0
+  local attempts=0
 
   {
     echo "=== WatchCI run $run_id ==="
     echo "project=$NAME kind=$kind ref=$ref pr_id=${pr_id:-} sha=$sha"
     echo "started=$(iso_now)"
     echo "timeout_sec=$TIMEOUT_SEC"
+    echo "fail_retries=$FAIL_RETRIES"
     echo "=== checkout ==="
   } >"$log_path"
 
@@ -223,21 +225,33 @@ run_event() {
         chmod +x "$script_path" 2>/dev/null || true
         # duration / timeout apply to script only (not clone/checkout)
         start_epoch="$(epoch_now)"
-        set +e
-        (
-          cd "$cwd" || exit 1
-          export WATCHCI_SHA="$sha"
-          export WATCHCI_REF="$ref"
-          export WATCHCI_KIND="$kind"
-          export WATCHCI_PR_ID="${pr_id:-}"
-          export WATCHCI_PROJECT="$NAME"
-          export WATCHCI_LOG="$log_path"
-          export WATCHCI_RUN_ID="$run_id"
-          export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
-          run_with_timeout "$TIMEOUT_SEC" bash "${_SCRIPT_CMDLINE[@]}"
-        ) >>"$log_path" 2>&1
-        exit_code=$?
-        set -e
+        while true; do
+          set +e
+          (
+            cd "$cwd" || exit 1
+            export WATCHCI_SHA="$sha"
+            export WATCHCI_REF="$ref"
+            export WATCHCI_KIND="$kind"
+            export WATCHCI_PR_ID="${pr_id:-}"
+            export WATCHCI_PROJECT="$NAME"
+            export WATCHCI_LOG="$log_path"
+            export WATCHCI_RUN_ID="$run_id"
+            export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
+            run_with_timeout "$TIMEOUT_SEC" bash "${_SCRIPT_CMDLINE[@]}"
+          ) >>"$log_path" 2>&1
+          exit_code=$?
+          set -e
+          attempts=$((attempts + 1))
+          [[ "$exit_code" -eq 0 ]] && break
+          # attempts-1 == completed failures so far; FAIL_RETRIES = extra tries allowed
+          [[ "$((attempts - 1))" -ge "$FAIL_RETRIES" ]] && break
+          echo "=== retry $attempts/$FAIL_RETRIES after exit=$exit_code ===" >>"$log_path"
+          _clone_cleanup
+          if ! _checkout_sha "$sha" "$kind" "$pr_id" "$log_path" "$base"; then
+            exit_code=1
+            break
+          fi
+        done
       fi
     fi
   fi
@@ -251,7 +265,7 @@ run_event() {
   else
     status=failure
   fi
-  echo "=== finished status=$status exit=$exit_code duration=${duration}s timeout_sec=$TIMEOUT_SEC ===" >>"$log_path"
+  echo "=== finished status=$status exit=$exit_code duration=${duration}s timeout_sec=$TIMEOUT_SEC attempts=$attempts ===" >>"$log_path"
 
   # Write run meta JSON
   local meta="$DATA_DIR/runs/${run_id}.meta.json"
@@ -269,17 +283,18 @@ run_event() {
       --argjson finished "$end_epoch" \
       --argjson duration "$duration" \
       --argjson timeout_sec "$TIMEOUT_SEC" \
+      --argjson attempts "$attempts" \
       --arg log "$log_path" \
       '{
         id:$id, project:$project, kind:$kind, ref:$ref,
         pr_id:(if $pr_id=="" then null else $pr_id end),
         sha:$sha, status:$status, exit_code:$exit_code,
         started:$started, finished:$finished, duration:$duration,
-        timeout_sec:$timeout_sec, log:$log
+        timeout_sec:$timeout_sec, attempts:$attempts, log:$log
       }' >"$meta"
   else
     cat >"$meta" <<EOF
-{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$duration,"timeout_sec":$TIMEOUT_SEC,"log":"$log_path"}
+{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$duration,"timeout_sec":$TIMEOUT_SEC,"attempts":$attempts,"log":"$log_path"}
 EOF
   fi
 
@@ -294,7 +309,7 @@ EOF
   site_update_after_run "$run_id" || warn "site update failed"
 
   event_mark_done "$event_path"
-  info "run $run_id done status=$status duration=${duration}s timeout_sec=$TIMEOUT_SEC"
+  info "run $run_id done status=$status duration=${duration}s timeout_sec=$TIMEOUT_SEC attempts=$attempts"
 }
 
 # Drain up to MAX_PARALLEL_RUNS events (serial if 1).

@@ -164,6 +164,10 @@ assert "REPO_URL" in d
 assert "POLL_INTERVAL_SEC" not in [f["key"] for f in mod.PROJECT_SCHEMA]
 assert any(f["key"] == "POLL_INTERVAL_SEC" for f in mod.GLOBAL_SCHEMA)
 assert any(f["key"] == "ALLOW_MANUAL_RERUN" for f in mod.PROJECT_SCHEMA)
+gfr = next(f for f in mod.GLOBAL_SCHEMA if f["key"] == "DEFAULT_FAIL_RETRIES")
+assert "最大 8" in gfr["help"]
+pfr = next(f for f in mod.PROJECT_SCHEMA if f["key"] == "FAIL_RETRIES")
+assert "最大 8" in pfr["help"]
 out = mod.dump_conf({"NAME": "x", "ENABLED": "true"}, mod.PROJECT_SCHEMA)
 assert "项目名称" in out or "NAME=x" in out
 assert "# " in out
@@ -308,6 +312,152 @@ bash -c '
   [[ "$POLL_INTERVAL_SEC" == "60" ]] || { echo "FAIL: project POLL leaked, got $POLL_INTERVAL_SEC"; exit 1; }
   echo "project poll isolation ok"
 '
+
+# FAIL_RETRIES / DEFAULT_FAIL_RETRIES: defaults, clamp, inherit
+bash -c '
+  source "'"$ROOT"'/lib/config.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  [[ "${DEFAULT_FAIL_RETRIES:-}" == "1" ]] || { echo "FAIL: default DEFAULT_FAIL_RETRIES want 1 got $DEFAULT_FAIL_RETRIES"; exit 1; }
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$FAIL_RETRIES" == "1" ]] || { echo "FAIL: empty FAIL_RETRIES should inherit 1 got $FAIL_RETRIES"; exit 1; }
+
+  # project =0 stays 0
+  echo "FAIL_RETRIES=0" >>"'"$TMP"'/config/projects/smoke.conf"
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$FAIL_RETRIES" == "0" ]] || { echo "FAIL: FAIL_RETRIES=0 want 0 got $FAIL_RETRIES"; exit 1; }
+
+  # negative → fallback DEFAULT
+  sed -i.bak "s/^FAIL_RETRIES=.*/FAIL_RETRIES=-1/" "'"$TMP"'/config/projects/smoke.conf"
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$FAIL_RETRIES" == "1" ]] || { echo "FAIL: FAIL_RETRIES=-1 want 1 got $FAIL_RETRIES"; exit 1; }
+
+  # non-numeric → fallback
+  sed -i.bak "s/^FAIL_RETRIES=.*/FAIL_RETRIES=abc/" "'"$TMP"'/config/projects/smoke.conf"
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$FAIL_RETRIES" == "1" ]] || { echo "FAIL: FAIL_RETRIES=abc want 1 got $FAIL_RETRIES"; exit 1; }
+
+  # >8 → clamp 8
+  sed -i.bak "s/^FAIL_RETRIES=.*/FAIL_RETRIES=99/" "'"$TMP"'/config/projects/smoke.conf"
+  load_project_file "'"$TMP"'/config/projects/smoke.conf"
+  [[ "$FAIL_RETRIES" == "8" ]] || { echo "FAIL: FAIL_RETRIES=99 want 8 got $FAIL_RETRIES"; exit 1; }
+
+  # global DEFAULT_FAIL_RETRIES clamp / invalid
+  echo "DEFAULT_FAIL_RETRIES=0" >>"'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_FAIL_RETRIES" == "0" ]] || { echo "FAIL: DEFAULT_FAIL_RETRIES=0 want 0 got $DEFAULT_FAIL_RETRIES"; exit 1; }
+  sed -i.bak "s/^DEFAULT_FAIL_RETRIES=.*/DEFAULT_FAIL_RETRIES=-3/" "'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_FAIL_RETRIES" == "1" ]] || { echo "FAIL: DEFAULT_FAIL_RETRIES=-3 want 1 got $DEFAULT_FAIL_RETRIES"; exit 1; }
+  sed -i.bak "s/^DEFAULT_FAIL_RETRIES=.*/DEFAULT_FAIL_RETRIES=xyz/" "'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_FAIL_RETRIES" == "1" ]] || { echo "FAIL: DEFAULT_FAIL_RETRIES=xyz want 1 got $DEFAULT_FAIL_RETRIES"; exit 1; }
+  sed -i.bak "s/^DEFAULT_FAIL_RETRIES=.*/DEFAULT_FAIL_RETRIES=99/" "'"$TMP"'/config/watchci.conf"
+  load_global_config
+  [[ "$DEFAULT_FAIL_RETRIES" == "8" ]] || { echo "FAIL: DEFAULT_FAIL_RETRIES=99 want 8 got $DEFAULT_FAIL_RETRIES"; exit 1; }
+  # restore defaults for later smoke
+  sed -i.bak "s/^DEFAULT_FAIL_RETRIES=.*/DEFAULT_FAIL_RETRIES=1/" "'"$TMP"'/config/watchci.conf"
+  sed -i.bak "/^FAIL_RETRIES=/d" "'"$TMP"'/config/projects/smoke.conf"
+  load_global_config
+  echo "fail_retries clamp ok"
+'
+
+# Instant fail-retry: flaky SCRIPT succeeds on 2nd try; one meta, no extra pending
+cat >"$TMP/work/flaky-ci.sh" <<'EOF'
+#!/usr/bin/env bash
+# State outside clone — checkout between retries wipes the tree.
+MARKER="${WATCHCI_LOG}.flaky_once"
+if [[ -f "$MARKER" ]]; then
+  rm -f "$MARKER"
+  exit 0
+fi
+touch "$MARKER"
+exit 1
+EOF
+chmod +x "$TMP/work/flaky-ci.sh"
+git -C "$TMP/work" add flaky-ci.sh
+git -C "$TMP/work" commit -q -m "flaky script"
+git -C "$TMP/work" push -q origin main
+FLAKY_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+# Ensure FAIL_RETRIES=1 (default) and SCRIPT points at flaky
+grep -q '^FAIL_RETRIES=' "$TMP/config/projects/smoke.conf" && sed -i.bak '/^FAIL_RETRIES=/d' "$TMP/config/projects/smoke.conf"
+sed -i.bak "s|^SCRIPT=.*|SCRIPT=./flaky-ci.sh|" "$TMP/config/projects/smoke.conf"
+before_metas=$(find "$SMOKE_DATA/runs" -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  source "'"$ROOT"'/lib/config.sh"
+  source "'"$ROOT"'/lib/events.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  event_enqueue smoke branch main "'"$FLAKY_SHA"'" "" smoke
+'
+"$ROOT/bin/watchci" tick
+pending_left=$(find "$SMOKE_DATA/events/pending" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+[[ "$pending_left" == "0" ]] || { echo "FAIL: pending left after flaky retry ($pending_left)"; ls -la "$SMOKE_DATA/events/pending"; exit 1; }
+after_metas=$(find "$SMOKE_DATA/runs" -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')
+[[ "$after_metas" -eq $((before_metas + 1)) ]] || { echo "FAIL: flaky retry should add exactly 1 meta (before=$before_metas after=$after_metas)"; exit 1; }
+flaky_meta=""
+for m in "$SMOKE_DATA"/runs/*.meta.json; do
+  if grep -q "$FLAKY_SHA" "$m" && grep -q '"status": "success"' "$m"; then
+    flaky_meta="$m"
+    break
+  fi
+done
+[[ -n "$flaky_meta" ]] || { echo "FAIL: flaky retry meta not success"; exit 1; }
+grep -q '"attempts": 2' "$flaky_meta" || grep -q '"attempts":2' "$flaky_meta" || { echo "FAIL: expected attempts=2 in $flaky_meta"; cat "$flaky_meta"; exit 1; }
+flaky_log="$(python3 -c "import json; print(json.load(open('$flaky_meta'))['log'])")"
+grep -q '=== retry 1/1 after exit=1 ===' "$flaky_log" || { echo "FAIL: missing retry mark in log"; cat "$flaky_log"; exit 1; }
+echo "fail retry instant ok"
+
+# FAIL_RETRIES=0: fail once, no retry
+cat >"$TMP/work/always-fail.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$TMP/work/always-fail.sh"
+git -C "$TMP/work" add always-fail.sh
+git -C "$TMP/work" commit -q -m "always fail"
+git -C "$TMP/work" push -q origin main
+FAIL0_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+sed -i.bak "s|^SCRIPT=.*|SCRIPT=./always-fail.sh|" "$TMP/config/projects/smoke.conf"
+echo "FAIL_RETRIES=0" >>"$TMP/config/projects/smoke.conf"
+before_metas=$(find "$SMOKE_DATA/runs" -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')
+bash -c '
+  source "'"$ROOT"'/lib/common.sh"
+  source "'"$ROOT"'/lib/config.sh"
+  source "'"$ROOT"'/lib/events.sh"
+  export WATCHCI_ROOT="'"$ROOT"'"
+  export CONFIG_DIR="'"$TMP"'/config"
+  export GLOBAL_CONF="'"$TMP"'/config/watchci.conf"
+  export PROJECTS_DIR="'"$TMP"'/config/projects"
+  load_global_config
+  event_enqueue smoke branch main "'"$FAIL0_SHA"'" "" smoke
+'
+"$ROOT/bin/watchci" tick
+fail0_meta=""
+for m in "$SMOKE_DATA"/runs/*.meta.json; do
+  if grep -q "$FAIL0_SHA" "$m"; then
+    fail0_meta="$m"
+    break
+  fi
+done
+[[ -n "$fail0_meta" ]] || { echo "FAIL: no meta for FAIL_RETRIES=0 run"; exit 1; }
+grep -q '"status": "failure"' "$fail0_meta" || grep -q '"status":"failure"' "$fail0_meta" || { echo "FAIL: expected failure"; cat "$fail0_meta"; exit 1; }
+grep -q '"attempts": 1' "$fail0_meta" || grep -q '"attempts":1' "$fail0_meta" || { echo "FAIL: expected attempts=1"; cat "$fail0_meta"; exit 1; }
+fail0_log="$(python3 -c "import json; print(json.load(open('$fail0_meta'))['log'])")"
+grep -q '=== retry' "$fail0_log" && { echo "FAIL: FAIL_RETRIES=0 should not retry"; cat "$fail0_log"; exit 1; }
+after_metas=$(find "$SMOKE_DATA/runs" -name '*.meta.json' 2>/dev/null | wc -l | tr -d ' ')
+[[ "$after_metas" -eq $((before_metas + 1)) ]] || { echo "FAIL: FAIL_RETRIES=0 should add 1 meta"; exit 1; }
+# restore SCRIPT for later tests that expect run-ci.sh success
+sed -i.bak "s|^SCRIPT=.*|SCRIPT=./run-ci.sh|" "$TMP/config/projects/smoke.conf"
+sed -i.bak '/^FAIL_RETRIES=/d' "$TMP/config/projects/smoke.conf"
+echo "fail retries=0 no-retry ok"
 
 # BRANCHES filters PR by base (target), not head
 bash -c '
