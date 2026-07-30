@@ -10,30 +10,35 @@
 
 ## 快速开始
 
+推荐路径：**先起配置 UI 配好项目，再启动监听**。未配好就直接 `start` / `tick` 容易空转告警，或因错误仓库 / 脚本污染 `data/`、工作区 clone。
+
 ```bash
 cp config/watchci.conf.example config/watchci.conf
 cp config/projects/example.conf config/projects/my-app.conf
-# 编辑 my-app.conf：REPO_URL / OWNER / REPO / SCRIPT，ENABLED=true
 export GITHUB_TOKEN=...   # 对应项目 TOKEN_ENV 指向的环境变量名，勿把令牌写进 conf
 
-./bin/watchci tick         # 可选：先跑一轮 poll+执行，再看 data/site/
+./bin/watchci ui           # 本机配置页 http://127.0.0.1:8787/
+# 在 UI「全局 / 项目」中填写 REPO_URL / OWNER / REPO / SCRIPT 等，并设 ENABLED=true
+# 确认至少一个项目已启用且字段齐全后，另开终端：
+
 ./bin/watchci start        # 前台常驻；间隔见 POLL_INTERVAL_SEC（可用 nohup/tmux）
-# 另开终端
 ./bin/watchci status
-./bin/watchci ui           # 仅配置页 http://127.0.0.1:8787/
+# 可选调试：./bin/watchci tick   # 一轮 poll+执行，再看 data/site/
 ```
 
-`start` 且 `ADMIN_ENABLE=true` 时会同时拉起配置 UI。字段说明见示例 conf 行注释，或本机配置 UI。
+字段说明见示例 conf 行注释，或本机配置 UI（中文标签 + 英文键名提示）。已配好后也可手改 conf；`start` 且 `ADMIN_ENABLE=true` 时会顺带拉起配置 UI（进阶路径，首次仍建议先 `ui`）。
 
 ## 命令
 
+日常推荐先 `ui` 配好再 `start`。
+
 | 命令 | 说明 |
 |------|------|
+| `ui` | 仅配置 UI（前台）；首次与改配置时用；与结果看板无关 |
 | `start` | 前台 poll → run → sleep；`ADMIN_ENABLE=true` 时顺带起配置 UI |
 | `stop` | 停止守护进程与配置 UI |
 | `status` | 守护进程 / 配置 UI / 路径等状态 |
-| `ui` | 仅配置 UI（前台）；与结果看板无关 |
-| `tick` | 调试：一轮 poll + 排空 pending |
+| `tick` | 调试：一轮 poll + 排空 pending（项目配好后再用） |
 | `publish` | 在 `SITE_DIR` 下执行 `PUBLISH_CMD` 推送看板 |
 | `rebuild-site` | 按已有 run 全量重建本地看板（不自动 publish） |
 
@@ -85,7 +90,7 @@ AUTO_PUBLISH=false
 ## 两类网页
 
 1. **结果看板** `data/site/` — 见上节；可发布到公网。
-2. **配置 UI** — 仅本机（默认 `127.0.0.1:8787`），不要随看板发布。内含：
+2. **配置 UI** — 仅本机（默认 `127.0.0.1:8787`），不要随看板发布；首次建议 `./bin/watchci ui` 配好后再 `start`。内含：
    - **现场**：轮询跟进进行中的 run 日志（边跑边刷）
    - **可重跑**：失败 / 超时记录一键入队（项目 `ALLOW_MANUAL_RERUN`）
    - **全局 / 项目**：编辑 `config/*.conf`
