@@ -108,7 +108,7 @@ POST_PR_COMMENT=true
 
 1. 开一个测试 PR（合入目标分支要在项目的 `BRANCHES` 里）。
 2. 等 WatchCI 跑完（或 `./bin/watchci tick` 调试）。
-3. 打开该 PR 的评论区，应看到一条 **WatchCI · success/failure/timeout** 摘要。
+3. 打开该 PR 的评论区，应看到一条带状态图标的摘要（✅ success / ❌ failure / ⏰ timeout）。
 4. 再推一个 commit 触发第二次跑：应是**同一条评论内容被更新**，而不是又多一条新评论。
 
 若填了 `SITE_PUBLIC_URL`，评论里会有「详情」链接，指向 `…/runs/<run_id>/`。

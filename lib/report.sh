@@ -5,7 +5,7 @@
 # stdin unused; args: meta_path → stdout body.
 report_pr_comment_body() {
   local meta="$1"
-  local id project status sha duration attempts exit_code sha8 link marker
+  local id project status sha duration attempts exit_code sha8 link marker headline
   marker="${WATCHCI_COMMENT_MARKER:-<!-- watchci -->}"
   id="$(jq -r '.id // empty' "$meta")"
   project="$(jq -r '.project // empty' "$meta")"
@@ -15,12 +15,19 @@ report_pr_comment_body() {
   attempts="$(jq -r '.attempts // 1' "$meta")"
   exit_code="$(jq -r '.exit_code // 0' "$meta")"
   sha8="${sha:0:8}"
+  # emoji + h3: scannable in PR threads across GitHub/Gitee/GitCode
+  case "$status" in
+    success) headline="### ✅ WatchCI · success" ;;
+    failure) headline="### ❌ WatchCI · failure" ;;
+    timeout) headline="### ⏰ WatchCI · timeout" ;;
+    *)       headline="### WatchCI · ${status}" ;;
+  esac
   link=""
   if [[ -n "${SITE_PUBLIC_URL:-}" && -n "$id" ]]; then
     link="- [详情](${SITE_PUBLIC_URL}/runs/${id}/)"
   fi
   printf '%s\n' \
-    "**WatchCI · ${status}**" \
+    "$headline" \
     "" \
     "- project: \`${project}\`" \
     "- sha: \`${sha8}\`" \

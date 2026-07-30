@@ -918,9 +918,20 @@ bash -c '
 EOF
   SITE_PUBLIC_URL="https://ci.example.com"
   body="$(report_pr_comment_body "$meta")"
-  echo "$body" | grep -q "WatchCI · success" || { echo "FAIL: body status"; exit 1; }
+  echo "$body" | grep -q "✅ WatchCI · success" || { echo "FAIL: body status"; exit 1; }
   echo "$body" | grep -q "https://ci.example.com/runs/run-abc/" || { echo "FAIL: body link"; exit 1; }
   echo "$body" | grep -q "<!-- watchci -->" || { echo "FAIL: body marker"; exit 1; }
+  # failure / timeout headlines
+  cat >"$meta" <<EOF
+{"id":"run-fail","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef01","status":"failure","exit_code":1,"duration":3,"attempts":2}
+EOF
+  body="$(report_pr_comment_body "$meta")"
+  echo "$body" | grep -q "❌ WatchCI · failure" || { echo "FAIL: body failure"; exit 1; }
+  cat >"$meta" <<EOF
+{"id":"run-to","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef01","status":"timeout","exit_code":124,"duration":60,"attempts":1}
+EOF
+  body="$(report_pr_comment_body "$meta")"
+  echo "$body" | grep -q "⏰ WatchCI · timeout" || { echo "FAIL: body timeout"; exit 1; }
   echo "pr comment body ok"
 
   fake="$TMP/fake-curl-bin"
