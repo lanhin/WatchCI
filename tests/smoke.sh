@@ -71,6 +71,59 @@ git -C "$TMP/work" push -q origin main
 metas2=("$SMOKE_DATA"/runs/*.meta.json)
 [[ ${#metas2[@]} -ge 2 ]] || { echo "FAIL: expected second run"; exit 1; }
 
+# Dashboard: same project+PR groups; newest primary; history foldable
+python3 - <<PY
+import json
+from pathlib import Path
+
+runs = Path("$SMOKE_DATA") / "runs"
+base = {
+    "project": "smoke",
+    "kind": "pr",
+    "ref": "feat/group",
+    "pr_id": "42",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "exit_code": 1,
+    "started": 1000,
+    "duration": 10,
+    "timeout_sec": 60,
+    "log": "",
+}
+(runs / "grp-old.meta.json").write_text(
+    json.dumps({**base, "id": "grp-old", "finished": 1000, "status": "failure"}),
+    encoding="utf-8",
+)
+(runs / "grp-new.meta.json").write_text(
+    json.dumps(
+        {**base, "id": "grp-new", "finished": 2000, "status": "success", "exit_code": 0}
+    ),
+    encoding="utf-8",
+)
+PY
+"$ROOT/bin/watchci" rebuild-site
+idx="$SMOKE_DATA/site/index.html"
+grep -q 'group-toggle' "$idx" || { echo "FAIL: missing group-toggle"; exit 1; }
+grep -q 'run-history' "$idx" || { echo "FAIL: missing run-history"; exit 1; }
+grep -q 'data-group="smoke:42"' "$idx" || { echo "FAIL: missing data-group smoke:42"; exit 1; }
+grep -q '<th>Finished</th>' "$idx" || { echo "FAIL: missing Finished column"; exit 1; }
+python3 - <<PY
+from datetime import datetime
+from pathlib import Path
+html = Path("$SMOKE_DATA/site/index.html").read_text(encoding="utf-8")
+i_new = html.find("grp-new")
+i_old = html.find("grp-old")
+i_hist = html.find('class="run-history"')
+assert i_new > 0 and i_old > 0 and i_hist > 0, (i_new, i_old, i_hist)
+assert i_new < i_hist < i_old, "newest primary before history/old"
+ts_new = datetime.fromtimestamp(2000).strftime("%Y-%m-%d %H:%M:%S")
+ts_old = datetime.fromtimestamp(1000).strftime("%Y-%m-%d %H:%M:%S")
+assert ts_new in html and ts_old in html, (ts_new, ts_old)
+assert html.find(ts_new) < html.find(ts_old), "newer finished time should appear first"
+print("pr group dashboard ok")
+PY
+rm -f "$SMOKE_DATA/runs/grp-old.meta.json" "$SMOKE_DATA/runs/grp-new.meta.json"
+"$ROOT/bin/watchci" rebuild-site
+
 # Env override must win over conf (ADMIN_ENABLE=false in smoke conf)
 out="$(ADMIN_ENABLE=true "$ROOT/bin/watchci" status)"
 echo "$out" | grep -q 'ADMIN' || true

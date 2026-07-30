@@ -81,3 +81,21 @@ pre.log {
   line-height: 1.4;
 }
 .meta th { width: 8rem; color: var(--muted); }
+.group-toggle {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 0.35rem 0 0;
+  white-space: nowrap;
+}
+.group-toggle:hover { color: var(--accent); }
+tr.run-history td { color: var(--muted); }
+tr.run-history td:first-child { padding-left: 1.6rem; }
+td.finished {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.88em;
+}

@@ -6,7 +6,16 @@ import argparse
 import html
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
+
+
+def format_ts(run: dict) -> str:
+    ts = run.get("finished") or run.get("started")
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "—"
 
 
 def load_runs(runs_dir: Path) -> list[dict]:
@@ -80,6 +89,7 @@ def render_run_page(run: dict, site_dir: Path) -> None:
 <tr><th>PR</th><td>{html.escape(str(run.get("pr_id") or "—"))}</td></tr>
 <tr><th>SHA</th><td><code>{html.escape(str(run.get("sha","")))}</code></td></tr>
 <tr><th>Exit</th><td>{html.escape(str(run.get("exit_code","")))}</td></tr>
+<tr><th>Finished</th><td>{html.escape(format_ts(run))}</td></tr>
 <tr><th>Duration</th><td>{html.escape(str(run.get("duration","")))}s</td></tr>
 </table>
 <p><a href="log.txt">Full log</a></p>
@@ -100,6 +110,44 @@ def latest_by_project(runs: list[dict]) -> dict[str, dict]:
     return out
 
 
+def group_runs(runs: list[dict]) -> list[list[dict]]:
+    """Group by (project, pr_id) when pr_id set; else one run per group. Newest-first."""
+    groups: list[list[dict]] = []
+    index: dict[tuple, int] = {}
+    for r in runs:
+        project = str(r.get("project") or "?")
+        pr = r.get("pr_id")
+        if pr not in (None, ""):
+            key: tuple = ("pr", project, str(pr))
+        else:
+            key = ("run", r.get("id") or id(r))
+        if key in index:
+            groups[index[key]].append(r)
+        else:
+            index[key] = len(groups)
+            groups.append([r])
+    return groups
+
+
+def _run_row_cells(r: dict, id_prefix: str = "") -> str:
+    st = html.escape(str(r.get("status", "")))
+    pr = r.get("pr_id")
+    pr_cell = html.escape(f"#{pr}") if pr not in (None, "") else "—"
+    finished = html.escape(format_ts(r))
+    return (
+        f"<td>{id_prefix}"
+        f'<a href="runs/{html.escape(r["id"])}/index.html">{html.escape(r["id"])}</a></td>'
+        f'<td>{html.escape(str(r.get("project","")))}</td>'
+        f'<td class="status-{st}">{st}</td>'
+        f'<td>{html.escape(str(r.get("kind","")))}</td>'
+        f"<td>{pr_cell}</td>"
+        f'<td>{html.escape(str(r.get("ref","")))}</td>'
+        f'<td><code>{html.escape(str(r.get("sha","")[:8]))}</code></td>'
+        f'<td class="finished">{finished}</td>'
+        f'<td>{html.escape(str(r.get("duration","")))}s</td>'
+    )
+
+
 def render_index(runs: list[dict], site_dir: Path) -> None:
     latest = latest_by_project(runs)
     cards = []
@@ -116,22 +164,37 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
             f"</div>"
         )
     rows = []
-    for r in runs[:200]:
-        st = html.escape(str(r.get("status", "")))
-        pr = r.get("pr_id")
-        pr_cell = html.escape(f"#{pr}") if pr not in (None, "") else "—"
-        rows.append(
-            "<tr>"
-            f'<td><a href="runs/{html.escape(r["id"])}/index.html">{html.escape(r["id"])}</a></td>'
-            f'<td>{html.escape(str(r.get("project","")))}</td>'
-            f'<td class="status-{st}">{st}</td>'
-            f'<td>{html.escape(str(r.get("kind","")))}</td>'
-            f"<td>{pr_cell}</td>"
-            f'<td>{html.escape(str(r.get("ref","")))}</td>'
-            f'<td><code>{html.escape(str(r.get("sha","")[:8]))}</code></td>'
-            f'<td>{html.escape(str(r.get("duration","")))}s</td>'
-            "</tr>"
-        )
+    for group in group_runs(runs)[:200]:
+        primary = group[0]
+        st = html.escape(str(primary.get("status", "")))
+        project = html.escape(str(primary.get("project") or "?"))
+        pr = primary.get("pr_id")
+        history = group[1:]
+        if history and pr not in (None, ""):
+            group_key = html.escape(f"{primary.get('project') or '?'}:{pr}")
+            n = len(history)
+            toggle = (
+                f'<button type="button" class="group-toggle" aria-expanded="false" '
+                f'data-group="{group_key}">▶ {n}</button> '
+            )
+            rows.append(
+                f'<tr class="run-primary" data-project="{project}" '
+                f'data-status="{st}" data-group="{group_key}">'
+                f"{_run_row_cells(primary, toggle)}"
+                "</tr>"
+            )
+            for r in history:
+                rows.append(
+                    f'<tr class="run-history" data-group="{group_key}" hidden>'
+                    f"{_run_row_cells(r)}"
+                    "</tr>"
+                )
+        else:
+            rows.append(
+                f'<tr class="run-primary" data-project="{project}" data-status="{st}">'
+                f"{_run_row_cells(primary)}"
+                "</tr>"
+            )
     page = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -166,7 +229,7 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
     </select>
   </div>
   <table id="runs-table">
-    <thead><tr><th>ID</th><th>Project</th><th>Status</th><th>Kind</th><th>PR</th><th>Ref</th><th>SHA</th><th>Dur</th></tr></thead>
+    <thead><tr><th>ID</th><th>Project</th><th>Status</th><th>Kind</th><th>PR</th><th>Ref</th><th>SHA</th><th>Finished</th><th>Dur</th></tr></thead>
     <tbody>
 {"".join(rows)}
     </tbody>
