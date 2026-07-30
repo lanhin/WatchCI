@@ -13,6 +13,9 @@
 # provider_pr_head_sha <id>   (optional)
 #   Prints head sha for one PR/MR.
 #
+# provider_upsert_pr_comment <pr_id> <body>   (optional; github/gitee/gitcode)
+#   Create or update sticky PR comment whose body contains WATCHCI_COMMENT_MARKER.
+#
 # Token is read from environment variable named by TOKEN_ENV (never from conf value).
 
 provider_token() {
@@ -26,15 +29,22 @@ provider_token() {
 
 # Redact secrets for log lines (Bearer / PRIVATE-TOKEN / access_token=).
 _provider_curl_cmd_redacted() {
-  local a s=""
+  local a s="" redact_next=0
   for a in "$@"; do
-    case "$a" in
-      Authorization:*[Bb]earer*) a="Authorization: Bearer ***" ;;
-      PRIVATE-TOKEN:*) a="PRIVATE-TOKEN: ***" ;;
-      *access_token=*)
-        a="$(printf '%s' "$a" | sed -E 's/access_token=[^&"]+/access_token=***/g')"
-        ;;
-    esac
+    if [[ "$redact_next" -eq 1 ]]; then
+      a="***"
+      redact_next=0
+    else
+      case "$a" in
+        Authorization:*[Bb]earer*) a="Authorization: Bearer ***" ;;
+        # word-split of "Authorization: Bearer TOKEN" leaves Bearer + token separate
+        [Bb]earer) a="Bearer"; redact_next=1 ;;
+        PRIVATE-TOKEN:*) a="PRIVATE-TOKEN: ***" ;;
+        *access_token=*)
+          a="$(printf '%s' "$a" | sed -E 's/access_token=[^&"]+/access_token=***/g')"
+          ;;
+      esac
+    fi
     s+=" $(printf '%q' "$a")"
   done
   echo "curl -fsSL${s}"
@@ -55,3 +65,30 @@ provider_api_get() {
   fi
   return 0
 }
+
+# POST/PATCH (or any method via curl args) with -fsSL. Same 502/redact behavior as GET.
+provider_api_json() {
+  local err ec=0
+  exec 3>&1
+  err="$(curl -fsSL "$@" 2>&1 1>&3)" || ec=$?
+  exec 3>&-
+  if [[ "$ec" -ne 0 ]]; then
+    [[ -n "$err" ]] && echo "$err" >&2
+    if [[ "$err" == *'returned error: 502'* ]]; then
+      warn "curl 502 command: $(_provider_curl_cmd_redacted "$@")"
+    fi
+    return "$ec"
+  fi
+  return 0
+}
+
+# Hidden marker in PR comment body for sticky upsert.
+WATCHCI_COMMENT_MARKER='<!-- watchci -->'
+
+# stdin: comments JSON array → stdout: first matching comment id, or empty.
+provider_comment_find_id() {
+  jq -r --arg m "$WATCHCI_COMMENT_MARKER" '
+    map(select((.body // "") | contains($m))) | .[0].id // empty
+  '
+}
+

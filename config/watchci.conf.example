@@ -19,6 +19,8 @@ SITE_DIR=
 PUBLISH_CMD=
 # 自动发布 — 每次 run 结束更新看板后是否自动执行发布命令（rebuild-site 不会触发）。
 AUTO_PUBLISH=false
+# 看板公网根 URL — 无尾斜杠；非空则 PR 评论可带 runs/<id>/ 链接。见 docs/pr-comment-setup.md。
+SITE_PUBLIC_URL=
 
 # —— 路径（高级） ——
 # 数据目录 — 克隆、日志、状态等运行时数据；空则仓库下 data/。

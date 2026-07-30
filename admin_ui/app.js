@@ -20,7 +20,10 @@
     "ADMIN_ENABLE",
     "ENABLED",
     "ALLOW_MANUAL_RERUN",
+    "POST_PR_COMMENT",
   ]);
+  // ponytail: missing conf → these default false (others default true)
+  const BOOL_DEFAULT_FALSE = new Set(["AUTO_PUBLISH", "POST_PR_COMMENT"]);
 
   const $ = (id) => document.getElementById(id);
   const msgTimers = Object.create(null);
@@ -414,6 +417,7 @@
       }
     } else if (BOOL_KEYS.has(key)) {
       input = document.createElement("select");
+      const def = BOOL_DEFAULT_FALSE.has(key) ? "false" : "true";
       for (const [v, t] of [
         ["true", "是"],
         ["false", "否"],
@@ -421,7 +425,7 @@
         const o = document.createElement("option");
         o.value = v;
         o.textContent = t;
-        if (String(value || "true") === v) o.selected = true;
+        if (String(value || def) === v) o.selected = true;
         input.appendChild(o);
       }
     } else {
@@ -606,6 +610,7 @@
       SCRIPT: "./scripts/ci.example.sh",
       TOKEN_ENV: "GITHUB_TOKEN",
       ALLOW_MANUAL_RERUN: "true",
+      POST_PR_COMMENT: "false",
     };
     fillForm($("form-project"), schema.project, data);
     $("form-project").dataset.create = "1";

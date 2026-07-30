@@ -308,6 +308,8 @@ EOF
 
   site_update_after_run "$run_id" || warn "site update failed"
 
+  report_pr_comment "$run_id" || warn "pr comment failed"
+
   event_mark_done "$event_path"
   info "run $run_id done status=$status duration=${duration}s timeout_sec=$TIMEOUT_SEC attempts=$attempts"
 }
