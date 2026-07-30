@@ -56,6 +56,8 @@ export GITHUB_TOKEN=...   # 对应项目 TOKEN_ENV 指向的环境变量名，�
 
 输出目录默认 `data/site/`（`SITE_DIR`）。纯静态 HTML，可推公网；**进行中的 run 不会出现在看板上**，只在 run **结束后**更新。
 
+可选：PR 跑完后**置顶更新一条结果评论**（GitHub / Gitee / GitCode）。需项目开启 `POST_PR_COMMENT`，并用带写权限的令牌；步骤见 [docs/pr-comment-setup.md](docs/pr-comment-setup.md)。
+
 | 动作 | 时机 / 命令 | 效果 |
 |------|-------------|------|
 | 日常 | 每次 CI run **结束** | 自动重写 `SITE_DIR`；若 `AUTO_PUBLISH=true` 再执行 `PUBLISH_CMD` |

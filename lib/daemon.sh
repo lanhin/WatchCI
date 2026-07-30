@@ -54,6 +54,8 @@ _source_runtime() {
   source "$WATCHCI_ROOT/lib/poll.sh"
   # shellcheck source=site.sh
   source "$WATCHCI_ROOT/lib/site.sh"
+  # shellcheck source=report.sh
+  source "$WATCHCI_ROOT/lib/report.sh"
   # shellcheck source=runner.sh
   source "$WATCHCI_ROOT/lib/runner.sh"
 }

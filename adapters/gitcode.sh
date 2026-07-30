@@ -53,3 +53,40 @@ provider_pr_head_sha() {
   provider_api_get $(provider_auth_args) \
     "${base}/repos/${owner}/${repo}/pulls/${id}" | jq -r '.head.sha // .sha'
 }
+
+# Upsert sticky WatchCI comment on a PR (GitCode pulls comments API).
+# Docs: GET/POST .../pulls/{number}/comments ; PATCH .../pulls/comments/{id}
+provider_upsert_pr_comment() {
+  local pr_id="$1" body="$2"
+  local base owner repo page json count cid payload
+  base="$(provider_default_api_base)"
+  owner="${OWNER:?OWNER required}"
+  repo="${REPO:?REPO required}"
+  [[ -n "$pr_id" ]] || return 1
+  cid=""
+  page=1
+  while [[ "$page" -le 5 ]]; do
+    # shellcheck disable=SC2046
+    json="$(provider_api_get $(provider_auth_args) \
+      "${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments?per_page=100&page=${page}&comment_type=pr_comment")" || return 1
+    cid="$(echo "$json" | provider_comment_find_id)"
+    [[ -n "$cid" ]] && break
+    count="$(echo "$json" | jq 'length')"
+    [[ "$count" -lt 100 ]] && break
+    page=$((page + 1))
+  done
+  payload="$(jq -n --arg body "$body" '{body:$body}')"
+  if [[ -n "$cid" ]]; then
+    # shellcheck disable=SC2046
+    provider_api_json $(provider_auth_args) -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$payload" \
+      "${base}/repos/${owner}/${repo}/pulls/comments/${cid}" >/dev/null
+  else
+    # shellcheck disable=SC2046
+    provider_api_json $(provider_auth_args) -X POST \
+      -H "Content-Type: application/json" \
+      -d "$payload" \
+      "${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments" >/dev/null
+  fi
+}

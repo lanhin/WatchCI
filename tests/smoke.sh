@@ -894,4 +894,81 @@ finally:
     server.server_close()
 PY
 
+# PR sticky comment: find marker + body builder + github upsert via fake curl
+bash -c '
+  set -euo pipefail
+  ROOT="'"$ROOT"'"
+  TMP="'"$TMP"'"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/common.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/adapters/_interface.sh"
+
+  found="$(printf "%s" "[{\"id\":1,\"body\":\"hello\"},{\"id\":99,\"body\":\"x <!-- watchci --> y\"}]" | provider_comment_find_id)"
+  [[ "$found" == "99" ]] || { echo "FAIL: find id got=$found"; exit 1; }
+  empty="$(printf "%s" "[{\"id\":1,\"body\":\"nope\"}]" | provider_comment_find_id)"
+  [[ -z "$empty" ]] || { echo "FAIL: expect empty got=$empty"; exit 1; }
+  echo "pr comment find id ok"
+
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/report.sh"
+  meta="$TMP/pr-comment.meta.json"
+  cat >"$meta" <<EOF
+{"id":"run-abc","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef0123456789","status":"success","exit_code":0,"duration":12,"attempts":1}
+EOF
+  SITE_PUBLIC_URL="https://ci.example.com"
+  body="$(report_pr_comment_body "$meta")"
+  echo "$body" | grep -q "WatchCI · success" || { echo "FAIL: body status"; exit 1; }
+  echo "$body" | grep -q "https://ci.example.com/runs/run-abc/" || { echo "FAIL: body link"; exit 1; }
+  echo "$body" | grep -q "<!-- watchci -->" || { echo "FAIL: body marker"; exit 1; }
+  echo "pr comment body ok"
+
+  fake="$TMP/fake-curl-bin"
+  mkdir -p "$fake"
+  # Write fake curl outside nested quoting; path via env for the script body.
+  cat >"$fake/curl" <<'"'"'FAKE'"'"'
+#!/usr/bin/env bash
+set -euo pipefail
+log="${FAKE_CURL_LOG:?}"
+printf "%s\n" "$*" >>"$log"
+method=GET
+url=""
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "-X" ]]; then
+    method="$a"
+  fi
+  case "$a" in
+    http://*|https://*) url="$a" ;;
+  esac
+  prev="$a"
+done
+case "$method:$url" in
+  GET:*/issues/*/comments*)
+    printf "%s\n" "[{\"id\":42,\"body\":\"old <!-- watchci -->\"}]"
+    exit 0
+    ;;
+  PATCH:*/issues/comments/42*)
+    printf "%s\n" "{\"id\":42}"
+    exit 0
+    ;;
+esac
+echo "unexpected curl method=$method url=$url" >&2
+exit 1
+FAKE
+  chmod +x "$fake/curl"
+  export PATH="$fake:$PATH"
+  export FAKE_CURL_LOG="$TMP/fake-curl.log"
+  : >"$FAKE_CURL_LOG"
+  export OWNER=o REPO=r TOKEN_ENV=GITHUB_TOKEN GITHUB_TOKEN=tok
+  # shellcheck source=/dev/null
+  source "$ROOT/adapters/github.sh"
+  provider_upsert_pr_comment 3 "WatchCI sticky <!-- watchci -->"
+  grep -q "PATCH" "$FAKE_CURL_LOG" || { echo "FAIL: expected PATCH"; cat "$FAKE_CURL_LOG"; exit 1; }
+  if grep -q " -X POST\|POST " "$FAKE_CURL_LOG"; then
+    echo "FAIL: should not POST"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  echo "pr comment sticky update ok"
+'
+
 echo "SMOKE OK"

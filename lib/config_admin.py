@@ -78,6 +78,12 @@ GLOBAL_SCHEMA = [
         "group": "site",
     },
     {
+        "key": "SITE_PUBLIC_URL",
+        "label": "看板公网根 URL",
+        "help": "无尾斜杠；非空则 PR 评论可带详情链接。见 docs/pr-comment-setup.md。",
+        "group": "site",
+    },
+    {
         "key": "DATA_DIR",
         "label": "数据目录",
         "help": "克隆、日志、状态等运行时数据；空则仓库下 data/。",
@@ -227,7 +233,13 @@ PROJECT_SCHEMA = [
     {
         "key": "TOKEN_ENV",
         "label": "令牌环境变量名",
-        "help": "如 GITHUB_TOKEN；存的是变量名，不是令牌本身。",
+        "help": "如 GITHUB_TOKEN；存的是变量名，不是令牌本身。发 PR 评论需写权限，见 docs/pr-comment-setup.md。",
+        "group": "run",
+    },
+    {
+        "key": "POST_PR_COMMENT",
+        "label": "回写 PR 评论",
+        "help": "跑完后置顶更新一条结果评论（GitHub/Gitee/GitCode）。见 docs/pr-comment-setup.md。",
         "group": "run",
     },
     {
