@@ -48,6 +48,8 @@ export GITHUB_TOKEN=...   # 对应项目 TOKEN_ENV 指向的环境变量名，�
 
 - **全局** `config/watchci.conf`：轮询间隔、默认超时、默认失败重试、看板发布、本机配置 UI。
 - **项目** `config/projects/*.conf`：仓库、监听分支/PR、CI 脚本；超时未写则用全局 `DEFAULT_TIMEOUT_SEC`；失败重试未写则用全局 `DEFAULT_FAIL_RETRIES`（默认 1、最大 8），失败后立刻原地再跑，不入队尾。
+- **合入去重**：分支 tip 若已是某次成功 PR CI 的 head（fast-forward）或 merge 的第二父提交，则不再因该 SHA 变化入队（与是否开启每日补跑无关）；直推 / squash 等对不上时仍会跑。该分支从未完成过 branch run 时仍会首跑。
+- **每日补跑（可选）**：项目设 `DAILY_ENABLE=true` 后，每天 `DAILY_AT`（本机时区）起若目标分支当天尚无完成的 branch CI，则入队一次；可用 `DAILY_SCRIPT`（空则用 `SCRIPT`）。到点只入队，不因正有其它 CI 而跳过。
 - **令牌**：项目里只写环境变量名（`TOKEN_ENV`），令牌本身放在环境变量中。
 - 轮询间隔只有全局一份；项目 conf 里即使写了 `POLL_INTERVAL_SEC` 也不会生效。
 - 字段说明见 `config/watchci.conf.example`、`config/projects/example.conf`，或本机配置 UI（中文标签 + 英文键名提示）。

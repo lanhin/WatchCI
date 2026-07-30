@@ -982,4 +982,187 @@ FAKE
   echo "pr comment sticky update ok"
 '
 
+# --- PR merge dedup + daily ---
+bash -c '
+  set -euo pipefail
+  ROOT="'"$ROOT"'"
+  TMP="'"$TMP"'"
+  SMOKE_DATA="'"$SMOKE_DATA"'"
+  export WATCHCI_ROOT="$ROOT"
+  export CONFIG_DIR="$TMP/config"
+  export GLOBAL_CONF="$TMP/config/watchci.conf"
+  export PROJECTS_DIR="$TMP/config/projects"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/common.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/config.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/state.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/events.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/poll.sh"
+  load_global_config
+  load_project_file "$PROJECTS_DIR/smoke.conf"
+  state_ensure
+  ensure_clone
+  git -C "$CLONE_DIR" fetch --prune origin >/dev/null 2>&1
+
+  MAIN_SHA="$(git -C "$CLONE_DIR" rev-parse refs/remotes/origin/main)"
+  # Simulate prior successful PR CI at MAIN_SHA + branch already ran once
+  mkdir -p "$DATA_DIR/runs"
+  cat >"$DATA_DIR/runs/pr-cover.meta.json" <<EOF
+{"id":"pr-cover","project":"smoke","kind":"pr","pr_id":"99","ref":"feat/x","sha":"$MAIN_SHA","status":"success","exit_code":0,"started":1,"finished":2,"duration":1,"attempts":1,"log":""}
+EOF
+  state_set branch main "$MAIN_SHA" success prior-run
+
+  # Fake tip change to same SHA (state already at MAIN_SHA) — bump state back then poll
+  # Create a feature commit, push as PR head, then FF main to it (covered)
+  git -C "$TMP/work" checkout -q main
+  git -C "$TMP/work" pull -q origin main
+  echo "ff-cover" >"$TMP/work/ff-cover.txt"
+  git -C "$TMP/work" add ff-cover.txt
+  git -C "$TMP/work" commit -q -m "ff-cover"
+  FF_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+  git -C "$TMP/work" push -q origin "HEAD:refs/pull/99/head"
+  # Pretend we already ran successful PR CI on this head
+  cat >"$DATA_DIR/runs/pr-cover.meta.json" <<EOF
+{"id":"pr-cover","project":"smoke","kind":"pr","pr_id":"99","ref":"feat/x","sha":"$FF_SHA","status":"success","exit_code":0,"started":1,"finished":2,"duration":1,"attempts":1,"log":""}
+EOF
+  # Keep branch state at old tip with last_run_id, then FF main
+  state_set branch main "$MAIN_SHA" success prior-run
+  git -C "$TMP/work" push -q origin main
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  poll_branches
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -eq 0 ]] || { echo "FAIL: FF covered by PR CI should not enqueue ($pending_n)"; ls "$DATA_DIR/events/pending"; exit 1; }
+  tracked="$(state_get_sha branch main)"
+  [[ "$tracked" == "$FF_SHA" ]] || { echo "FAIL: state should update to FF tip"; exit 1; }
+  echo "pr merge FF skip ok"
+
+  # No last_run_id: still enqueue even if PR covers
+  echo "first-run" >"$TMP/work/first-run.txt"
+  git -C "$TMP/work" add first-run.txt
+  git -C "$TMP/work" commit -q -m "first-run"
+  FR_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+  git -C "$TMP/work" push -q origin main
+  cat >"$DATA_DIR/runs/pr-cover2.meta.json" <<EOF
+{"id":"pr-cover2","project":"smoke","kind":"pr","pr_id":"100","ref":"feat/y","sha":"$FR_SHA","status":"success","exit_code":0,"started":1,"finished":2,"duration":1,"attempts":1,"log":""}
+EOF
+  # state with sha old but empty run_id
+  sf="$(state_file)"
+  TAB=$(printf \\t)
+  : >"$sf.tmp"
+  while IFS= read -r line || [[ -n "${line:-}" ]]; do
+    [[ -z "${line:-}" ]] && continue
+    case "$line" in
+      branch${TAB}main${TAB}*) ;;
+      *) printf "%s\n" "$line" >>"$sf.tmp" ;;
+    esac
+  done <"$sf"
+  mv "$sf.tmp" "$sf"
+  printf "branch\tmain\t%s\t\t\t%s\n" "$FF_SHA" "$(iso_now)" >>"$sf"
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  poll_branches
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -ge 1 ]] || { echo "FAIL: no last_run_id should still enqueue"; exit 1; }
+  # drop pending so later tests are clean
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  state_set branch main "$FR_SHA" success after-first
+  echo "no last_run_id still enqueue ok"
+
+  # Direct push (no PR meta for new tip) → enqueue
+  echo "direct" >"$TMP/work/direct.txt"
+  git -C "$TMP/work" add direct.txt
+  git -C "$TMP/work" commit -q -m "direct"
+  DIR_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+  git -C "$TMP/work" push -q origin main
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  poll_branches
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -ge 1 ]] || { echo "FAIL: direct push should enqueue"; exit 1; }
+  grep -q "\"source\": \"poll\"" "$DATA_DIR/events/pending"/*.json \
+    || grep -q "\"source\":\"poll\"" "$DATA_DIR/events/pending"/*.json \
+    || { echo "FAIL: expected source=poll"; cat "$DATA_DIR/events/pending"/*.json; exit 1; }
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  state_set branch main "$DIR_SHA" success after-direct
+  echo "direct push enqueue ok"
+
+  # Daily: enable, DAILY_AT in the past, no branch meta today → enqueue daily
+  # Wipe today branch metas for smoke project main (keep others)
+  python3 - <<PY
+import json, time
+from pathlib import Path
+runs = Path("$SMOKE_DATA") / "runs"
+today = time.strftime("%Y-%m-%d")
+for p in runs.glob("*.meta.json"):
+    m = json.loads(p.read_text())
+    if m.get("project") != "smoke" or m.get("kind") != "branch" or m.get("ref") != "main":
+        continue
+    fin = m.get("finished")
+    if fin is None:
+        continue
+    day = time.strftime("%Y-%m-%d", time.localtime(int(fin)))
+    if day == today:
+        # move finished to yesterday so daily can fire
+        m["finished"] = int(fin) - 86400
+        p.write_text(json.dumps(m))
+PY
+  cat >>"$PROJECTS_DIR/smoke.conf" <<EOF
+DAILY_ENABLE=true
+DAILY_AT=00:00
+DAILY_BRANCH=main
+DAILY_SCRIPT=./daily-ci.sh
+EOF
+  printf "%s\n" "#!/usr/bin/env bash" "echo DAILY_RAN" "exit 0" >"$TMP/work/daily-ci.sh"
+  chmod +x "$TMP/work/daily-ci.sh"
+  git -C "$TMP/work" add daily-ci.sh
+  git -C "$TMP/work" commit -q -m "daily script"
+  git -C "$TMP/work" push -q origin main
+  # absorb the push enqueue without running (state tip)
+  NEW_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
+  git -C "$CLONE_DIR" fetch --prune origin >/dev/null 2>&1
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  state_set branch main "$NEW_SHA" success after-daily-script
+  load_project_file "$PROJECTS_DIR/smoke.conf"
+  poll_daily
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -eq 1 ]] || { echo "FAIL: daily should enqueue once got=$pending_n"; ls "$DATA_DIR/events/pending" || true; exit 1; }
+  grep -q "\"source\": \"daily\"" "$DATA_DIR/events/pending"/*.json \
+    || grep -q "\"source\":\"daily\"" "$DATA_DIR/events/pending"/*.json \
+    || { echo "FAIL: expected source=daily"; cat "$DATA_DIR/events/pending"/*.json; exit 1; }
+  # second poll_daily dedups
+  poll_daily
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -eq 1 ]] || { echo "FAIL: daily dedup failed got=$pending_n"; exit 1; }
+  echo "daily enqueue ok"
+
+  # Run daily event → DAILY_SCRIPT
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/site.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/report.sh"
+  # shellcheck source=/dev/null
+  source "$ROOT/lib/runner.sh"
+  drain_events
+  daily_meta=""
+  for m in "$DATA_DIR"/runs/*.meta.json; do
+    if grep -q "\"source\": \"daily\"" "$m" || grep -q "\"source\":\"daily\"" "$m"; then
+      daily_meta="$m"
+    fi
+  done
+  [[ -n "$daily_meta" ]] || { echo "FAIL: no daily meta"; exit 1; }
+  dlog="$(python3 -c "import json; print(json.load(open(\"$daily_meta\"))[\"log\"])")"
+  grep -q "DAILY_RAN" "$dlog" || { echo "FAIL: DAILY_SCRIPT not run"; cat "$dlog"; exit 1; }
+  grep -q "daily-ci.sh" "$dlog" || { echo "FAIL: expected daily-ci.sh in log"; cat "$dlog"; exit 1; }
+  echo "daily script ok"
+
+  # Today already has branch run → poll_daily no-op
+  rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
+  poll_daily
+  pending_n=$(find "$DATA_DIR/events/pending" -name "*.json" 2>/dev/null | wc -l | tr -d " ")
+  [[ "$pending_n" -eq 0 ]] || { echo "FAIL: daily should skip when branch ran today"; exit 1; }
+  echo "daily skip when ran today ok"
+'
+
 echo "SMOKE OK"

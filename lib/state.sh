@@ -26,6 +26,18 @@ state_get_sha() {
   return 0
 }
 
+# Get last_run_id for kind+key (empty if never completed a run).
+state_get_run_id() {
+  local kind="$1" key="$2"
+  local sf
+  sf="$(state_file)"
+  state_ensure
+  while IFS=$'\t' read -r r_kind r_key r_sha r_status r_run r_ts; do
+    [[ "$r_kind" == "$kind" && "$r_key" == "$key" ]] && { echo "${r_run:-}"; return 0; }
+  done <"$sf"
+  return 0
+}
+
 # Upsert state row.
 state_set() {
   local kind="$1" key="$2" sha="$3" status="${4:-}" run_id="${5:-}"

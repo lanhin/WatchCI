@@ -130,7 +130,7 @@ _checkout_sha() {
 # Execute one event file. Returns 0 always (failure recorded in run meta).
 run_event() {
   local event_path="$1"
-  local project kind ref sha pr_id base
+  local project kind ref sha pr_id base source
   project="$(event_field "$event_path" project)"
   kind="$(event_field "$event_path" kind)"
   ref="$(event_field "$event_path" ref)"
@@ -139,6 +139,8 @@ run_event() {
   [[ "$pr_id" == "null" ]] && pr_id=
   base="$(event_field "$event_path" base)"
   [[ "$base" == "null" ]] && base=
+  source="$(event_field "$event_path" source)"
+  [[ -z "$source" || "$source" == "null" ]] && source=poll
 
   local pfile
   pfile="$(_find_project_file_by_name "$project")" || {
@@ -183,14 +185,14 @@ run_event() {
   local log_path="$DATA_DIR/logs/$NAME/${run_id}-${sha:0:8}.log"
   mkdir -p "$(dirname "$log_path")"
 
-  info "run $run_id project=$NAME kind=$kind ref=$ref sha=${sha:0:8}"
+  info "run $run_id project=$NAME kind=$kind ref=$ref source=$source sha=${sha:0:8}"
   start_epoch="$(epoch_now)"
   exit_code=0
   local attempts=0
 
   {
     echo "=== WatchCI run $run_id ==="
-    echo "project=$NAME kind=$kind ref=$ref pr_id=${pr_id:-} sha=$sha"
+    echo "project=$NAME kind=$kind ref=$ref pr_id=${pr_id:-} source=$source sha=$sha"
     echo "started=$(iso_now)"
     echo "timeout_sec=$TIMEOUT_SEC"
     echo "fail_retries=$FAIL_RETRIES"
@@ -201,6 +203,10 @@ run_event() {
     exit_code=1
   else
     local script_path cwd
+    # daily may use DAILY_SCRIPT; empty → fall back to SCRIPT
+    if [[ "$source" == "daily" && -n "${DAILY_SCRIPT:-}" ]]; then
+      SCRIPT="$DAILY_SCRIPT"
+    fi
     _SCRIPT_CMDLINE=()
     if ! _script_cmdline; then
       echo "SCRIPT empty/invalid: ${SCRIPT:-}" >>"$log_path"
@@ -237,6 +243,7 @@ run_event() {
             export WATCHCI_LOG="$log_path"
             export WATCHCI_RUN_ID="$run_id"
             export WATCHCI_TIMEOUT_SEC="$TIMEOUT_SEC"
+            export WATCHCI_SOURCE="$source"
             run_with_timeout "$TIMEOUT_SEC" bash "${_SCRIPT_CMDLINE[@]}"
           ) >>"$log_path" 2>&1
           exit_code=$?
@@ -278,6 +285,7 @@ run_event() {
       --arg pr_id "${pr_id:-}" \
       --arg sha "$sha" \
       --arg status "$status" \
+      --arg source "$source" \
       --argjson exit_code "$exit_code" \
       --argjson started "$start_epoch" \
       --argjson finished "$end_epoch" \
@@ -288,13 +296,13 @@ run_event() {
       '{
         id:$id, project:$project, kind:$kind, ref:$ref,
         pr_id:(if $pr_id=="" then null else $pr_id end),
-        sha:$sha, status:$status, exit_code:$exit_code,
+        sha:$sha, status:$status, source:$source, exit_code:$exit_code,
         started:$started, finished:$finished, duration:$duration,
         timeout_sec:$timeout_sec, attempts:$attempts, log:$log
       }' >"$meta"
   else
     cat >"$meta" <<EOF
-{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$duration,"timeout_sec":$TIMEOUT_SEC,"attempts":$attempts,"log":"$log_path"}
+{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":$( [[ -n "$pr_id" ]] && echo "\"$pr_id\"" || echo null ),"sha":"$sha","status":"$status","source":"$source","exit_code":$exit_code,"started":$start_epoch,"finished":$end_epoch,"duration":$duration,"timeout_sec":$TIMEOUT_SEC,"attempts":$attempts,"log":"$log_path"}
 EOF
   fi
 

@@ -21,9 +21,10 @@
     "ENABLED",
     "ALLOW_MANUAL_RERUN",
     "POST_PR_COMMENT",
+    "DAILY_ENABLE",
   ]);
   // ponytail: missing conf → these default false (others default true)
-  const BOOL_DEFAULT_FALSE = new Set(["AUTO_PUBLISH", "POST_PR_COMMENT"]);
+  const BOOL_DEFAULT_FALSE = new Set(["AUTO_PUBLISH", "POST_PR_COMMENT", "DAILY_ENABLE"]);
 
   const $ = (id) => document.getElementById(id);
   const msgTimers = Object.create(null);
@@ -417,7 +418,7 @@
       }
     } else if (BOOL_KEYS.has(key)) {
       input = document.createElement("select");
-      const def = BOOL_DEFAULT_FALSE.has(key) ? "false" : "true";
+      const def = field.default || (BOOL_DEFAULT_FALSE.has(key) ? "false" : "true");
       for (const [v, t] of [
         ["true", "是"],
         ["false", "否"],
@@ -430,7 +431,8 @@
       }
     } else {
       input = document.createElement("input");
-      input.value = value ?? "";
+      const raw = value ?? "";
+      input.value = String(raw) !== "" ? raw : (field.default ?? "");
     }
     input.name = key;
     wrap.appendChild(input);
@@ -611,6 +613,10 @@
       TOKEN_ENV: "GITHUB_TOKEN",
       ALLOW_MANUAL_RERUN: "true",
       POST_PR_COMMENT: "false",
+      DAILY_ENABLE: "false",
+      DAILY_AT: "02:00",
+      DAILY_BRANCH: "main",
+      DAILY_SCRIPT: "",
     };
     fillForm($("form-project"), schema.project, data);
     $("form-project").dataset.create = "1";

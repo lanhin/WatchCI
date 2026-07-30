@@ -139,6 +139,7 @@ load_project_file() {
   WATCH_PRS=true PR_LABELS= SCRIPT= WORKDIR= TIMEOUT_SEC= FAIL_RETRIES=
   TOKEN_ENV= CLONE_DIR= ENABLED=true PROJECT_ID= ALLOW_MANUAL_RERUN=true
   POST_PR_COMMENT=false
+  DAILY_ENABLE=false DAILY_AT=02:00 DAILY_BRANCH=main DAILY_SCRIPT=
   # shellcheck disable=SC1090
   set -a
   # shellcheck source=/dev/null
@@ -151,6 +152,10 @@ load_project_file() {
   ENABLED="${ENABLED:-true}"
   ALLOW_MANUAL_RERUN="${ALLOW_MANUAL_RERUN:-true}"
   POST_PR_COMMENT="${POST_PR_COMMENT:-false}"
+  DAILY_ENABLE="${DAILY_ENABLE:-false}"
+  DAILY_AT="${DAILY_AT:-02:00}"
+  DAILY_BRANCH="${DAILY_BRANCH:-main}"
+  DAILY_SCRIPT="${DAILY_SCRIPT:-}"
   TIMEOUT_SEC="${TIMEOUT_SEC:-$DEFAULT_TIMEOUT_SEC}"
   # ponytail: reject junk so run_with_timeout never gets "" / "30s"
   if ! [[ "$TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
@@ -168,6 +173,7 @@ load_project_file() {
   export NAME PROVIDER REPO_URL API_BASE OWNER REPO BRANCHES WATCH_PRS PR_LABELS
   export SCRIPT WORKDIR TIMEOUT_SEC FAIL_RETRIES TOKEN_ENV CLONE_DIR ENABLED PROJECT_ID
   export ALLOW_MANUAL_RERUN POST_PR_COMMENT POLL_INTERVAL_SEC
+  export DAILY_ENABLE DAILY_AT DAILY_BRANCH DAILY_SCRIPT
 }
 
 validate_project() {
@@ -178,6 +184,12 @@ validate_project() {
     github|gitee|gitlab|gitcode) ;;
     *) warn "project $NAME: unknown PROVIDER=$PROVIDER"; return 1 ;;
   esac
+  if [[ "${DAILY_ENABLE}" == "true" || "${DAILY_ENABLE}" == "1" ]]; then
+    if ! [[ "$DAILY_AT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+      warn "project $NAME: invalid DAILY_AT=$DAILY_AT (want HH:MM), skip"
+      return 1
+    fi
+  fi
   return 0
 }
 

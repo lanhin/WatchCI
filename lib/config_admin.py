@@ -31,6 +31,7 @@ GROUP_LABELS = {
     "identity": "仓库",
     "watch": "监听",
     "run": "执行",
+    "daily": "每日补跑",
 }
 
 # {key, label, help, group} — single source for UI + dump_conf comments
@@ -241,6 +242,33 @@ PROJECT_SCHEMA = [
         "label": "回写 PR 评论",
         "help": "跑完后置顶更新一条结果评论（GitHub/Gitee/GitCode）。见 docs/pr-comment-setup.md。",
         "group": "run",
+    },
+    {
+        "key": "DAILY_ENABLE",
+        "label": "每日补跑",
+        "help": "到点后若当天目标分支尚无完成的 branch CI，则入队一次（不写 PR 评论）。",
+        "group": "daily",
+        "default": "false",
+    },
+    {
+        "key": "DAILY_AT",
+        "label": "每日补跑时刻",
+        "help": "本机时区 HH:MM；到点后才考虑入队。",
+        "group": "daily",
+        "default": "02:00",
+    },
+    {
+        "key": "DAILY_BRANCH",
+        "label": "每日补跑分支",
+        "help": "须能被 BRANCHES 匹配；默认 main。",
+        "group": "daily",
+        "default": "main",
+    },
+    {
+        "key": "DAILY_SCRIPT",
+        "label": "每日补跑脚本",
+        "help": "仅 daily 事件用；空则用 SCRIPT。相对仓库根或绝对路径，可跟参数。",
+        "group": "daily",
     },
     {
         "key": "CLONE_DIR",
