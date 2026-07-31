@@ -13,8 +13,9 @@
 # provider_pr_head_sha <id>   (optional)
 #   Prints head sha for one PR/MR.
 #
-# provider_upsert_pr_comment <pr_id> <body>   (optional; github/gitee/gitcode)
+# provider_upsert_pr_comment <pr_id> <body> <status> <sha>   (optional; github/gitee/gitcode)
 #   Create or update sticky PR comment whose body contains WATCHCI_COMMENT_MARKER.
+#   Skips PATCH when new status is failure/timeout, existing comment is success, same sha8.
 #
 # Token is read from environment variable named by TOKEN_ENV (never from conf value).
 
@@ -85,10 +86,32 @@ provider_api_json() {
 # Hidden marker in PR comment body for sticky upsert.
 WATCHCI_COMMENT_MARKER='<!-- watchci -->'
 
+# stdin: comments JSON array → stdout: compact JSON {id,body} of first sticky, or empty.
+provider_comment_find_match() {
+  jq -c --arg m "$WATCHCI_COMMENT_MARKER" '
+    map(select((.body // "") | contains($m))) | .[0] | if . then {id, body} else empty end
+  '
+}
+
 # stdin: comments JSON array → stdout: first matching comment id, or empty.
 provider_comment_find_id() {
-  jq -r --arg m "$WATCHCI_COMMENT_MARKER" '
-    map(select((.body // "") | contains($m))) | .[0].id // empty
-  '
+  provider_comment_find_match | jq -r '.id // empty'
+}
+
+# Return 0 = skip PATCH (do not overwrite success with failure/timeout on same sha8).
+provider_comment_skip_downgrade() {
+  local old_body="$1" new_status="$2" new_sha="$3"
+  local old_status old_sha8 new_sha8
+  case "$new_status" in
+    failure|timeout) ;;
+    *) return 1 ;;
+  esac
+  old_status="$(printf '%s\n' "$old_body" | sed -n 's/.*WatchCI · \([a-z]*\).*/\1/p' | head -1)"
+  [[ "$old_status" == "success" ]] || return 1
+  old_sha8="$(printf '%s\n' "$old_body" | sed -n 's/.*sha: `\([0-9a-fA-F]*\)`.*/\1/p' | head -1)"
+  [[ -n "$old_sha8" ]] || return 1
+  new_sha8="${new_sha:0:8}"
+  [[ "$old_sha8" == "$new_sha8" ]] || return 1
+  return 0
 }
 

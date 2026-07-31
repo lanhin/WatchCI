@@ -910,6 +910,15 @@ bash -c '
   [[ -z "$empty" ]] || { echo "FAIL: expect empty got=$empty"; exit 1; }
   echo "pr comment find id ok"
 
+  success_body="$(printf "%s\n" "### ✅ WatchCI · success" "" "- sha: \`abcdef01\`" "" "<!-- watchci -->")"
+  fail_body="$(printf "%s\n" "### ❌ WatchCI · failure" "" "- sha: \`abcdef01\`" "" "<!-- watchci -->")"
+  provider_comment_skip_downgrade "$success_body" "failure" "abcdef0123456789" || { echo "FAIL: expect skip failure same sha"; exit 1; }
+  provider_comment_skip_downgrade "$success_body" "timeout" "abcdef0123456789" || { echo "FAIL: expect skip timeout same sha"; exit 1; }
+  provider_comment_skip_downgrade "$success_body" "failure" "deadbeef12345678" && { echo "FAIL: different sha should not skip"; exit 1; }
+  provider_comment_skip_downgrade "$fail_body" "failure" "abcdef0123456789" && { echo "FAIL: old failure should not skip"; exit 1; }
+  provider_comment_skip_downgrade "$success_body" "success" "abcdef0123456789" && { echo "FAIL: new success should not skip"; exit 1; }
+  echo "pr comment skip downgrade ok"
+
   # shellcheck source=/dev/null
   source "$ROOT/lib/report.sh"
   meta="$TMP/pr-comment.meta.json"
@@ -956,7 +965,11 @@ for a in "$@"; do
 done
 case "$method:$url" in
   GET:*/issues/*/comments*)
-    printf "%s\n" "[{\"id\":42,\"body\":\"old <!-- watchci -->\"}]"
+    if [[ "${FAKE_COMMENT_BODY:-}" == "success" ]]; then
+      printf "%s\n" "[{\"id\":42,\"body\":\"### ✅ WatchCI · success\\n\\n- sha: \`abcdef01\`\\n\\n<!-- watchci -->\"}]"
+    else
+      printf "%s\n" "[{\"id\":42,\"body\":\"old <!-- watchci -->\"}]"
+    fi
     exit 0
     ;;
   PATCH:*/issues/comments/42*)
@@ -974,12 +987,24 @@ FAKE
   export OWNER=o REPO=r TOKEN_ENV=GITHUB_TOKEN GITHUB_TOKEN=tok
   # shellcheck source=/dev/null
   source "$ROOT/adapters/github.sh"
-  provider_upsert_pr_comment 3 "WatchCI sticky <!-- watchci -->"
+  provider_upsert_pr_comment 3 "WatchCI sticky <!-- watchci -->" "failure" "deadbeef"
   grep -q "PATCH" "$FAKE_CURL_LOG" || { echo "FAIL: expected PATCH"; cat "$FAKE_CURL_LOG"; exit 1; }
   if grep -q " -X POST\|POST " "$FAKE_CURL_LOG"; then
     echo "FAIL: should not POST"; cat "$FAKE_CURL_LOG"; exit 1
   fi
   echo "pr comment sticky update ok"
+
+  : >"$FAKE_CURL_LOG"
+  export FAKE_COMMENT_BODY=success
+  provider_upsert_pr_comment 3 "new failure body <!-- watchci -->" "failure" "abcdef0123456789"
+  if grep -q "PATCH" "$FAKE_CURL_LOG"; then
+    echo "FAIL: should skip downgrade PATCH"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  if grep -q " -X POST\|POST " "$FAKE_CURL_LOG"; then
+    echo "FAIL: should not POST on skip"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  grep -q "comments" "$FAKE_CURL_LOG" || { echo "FAIL: expected GET comments"; cat "$FAKE_CURL_LOG"; exit 1; }
+  echo "pr comment skip downgrade upsert ok"
 '
 
 # --- PR merge dedup + daily ---

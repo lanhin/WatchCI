@@ -54,26 +54,34 @@ provider_pr_head_sha() {
 # Upsert sticky WatchCI comment on a PR.
 # GitHub: PR conversation comments use the Issues comments API (PRs are issues).
 provider_upsert_pr_comment() {
-  local pr_id="$1" body="$2"
-  local base owner repo page json count cid payload
+  local pr_id="$1" body="$2" status="${3:-}" sha="${4:-}"
+  local base owner repo page json count cid old_body match payload
   base="$(provider_default_api_base)"
   owner="${OWNER:?OWNER required}"
   repo="${REPO:?REPO required}"
   [[ -n "$pr_id" ]] || return 1
   cid=""
+  old_body=""
   page=1
   while [[ "$page" -le 5 ]]; do
     # shellcheck disable=SC2046
     json="$(provider_api_get $(provider_auth_args) \
       "${base}/repos/${owner}/${repo}/issues/${pr_id}/comments?per_page=100&page=${page}")" || return 1
-    cid="$(echo "$json" | provider_comment_find_id)"
-    [[ -n "$cid" ]] && break
+    match="$(echo "$json" | provider_comment_find_match)"
+    if [[ -n "$match" ]]; then
+      cid="$(jq -r '.id // empty' <<<"$match")"
+      old_body="$(jq -r '.body // empty' <<<"$match")"
+      break
+    fi
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -lt 100 ]] && break
     page=$((page + 1))
   done
   payload="$(jq -n --arg body "$body" '{body:$body}')"
   if [[ -n "$cid" ]]; then
+    if provider_comment_skip_downgrade "$old_body" "$status" "$sha"; then
+      return 0
+    fi
     # shellcheck disable=SC2046
     provider_api_json $(provider_auth_args) -X PATCH \
       -H "Content-Type: application/json" \

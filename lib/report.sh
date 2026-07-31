@@ -44,7 +44,7 @@ report_pr_comment_body() {
 # Requires project env already loaded (PROVIDER, OWNER, REPO, TOKEN_ENV, POST_PR_COMMENT).
 report_pr_comment() {
   local run_id="$1"
-  local meta kind pr_id body ap
+  local meta kind pr_id body status sha ap
   [[ "${POST_PR_COMMENT:-false}" == "true" || "${POST_PR_COMMENT:-false}" == "1" ]] || return 0
   meta="$DATA_DIR/runs/${run_id}.meta.json"
   [[ -f "$meta" ]] || return 0
@@ -72,6 +72,8 @@ report_pr_comment() {
     return 0
   fi
 
+  status="$(jq -r '.status // empty' "$meta")"
+  sha="$(jq -r '.sha // empty' "$meta")"
   body="$(report_pr_comment_body "$meta")"
-  provider_upsert_pr_comment "$pr_id" "$body"
+  provider_upsert_pr_comment "$pr_id" "$body" "$status" "$sha"
 }
