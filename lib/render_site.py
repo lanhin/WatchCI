@@ -110,17 +110,34 @@ def latest_by_project(runs: list[dict]) -> dict[str, dict]:
     return out
 
 
+def group_key_for(run: dict) -> tuple:
+    """Stable group identity: PR → (project, pr_id); branch → (project, kind, ref)."""
+    project = str(run.get("project") or "?")
+    pr = run.get("pr_id")
+    if pr not in (None, ""):
+        return ("pr", project, str(pr))
+    kind = str(run.get("kind") or "branch")
+    ref = str(run.get("ref") or "")
+    return ("branch", project, kind, ref)
+
+
+def group_label(run: dict) -> str:
+    """HTML data-group value matching group_key_for."""
+    project = str(run.get("project") or "?")
+    pr = run.get("pr_id")
+    if pr not in (None, ""):
+        return f"{project}:{pr}"
+    kind = str(run.get("kind") or "branch")
+    ref = str(run.get("ref") or "")
+    return f"{project}:{kind}:{ref}"
+
+
 def group_runs(runs: list[dict]) -> list[list[dict]]:
-    """Group by (project, pr_id) when pr_id set; else one run per group. Newest-first."""
+    """Group by PR or by branch ref. Newest-first within and across groups."""
     groups: list[list[dict]] = []
     index: dict[tuple, int] = {}
     for r in runs:
-        project = str(r.get("project") or "?")
-        pr = r.get("pr_id")
-        if pr not in (None, ""):
-            key: tuple = ("pr", project, str(pr))
-        else:
-            key = ("run", r.get("id") or id(r))
+        key = group_key_for(r)
         if key in index:
             groups[index[key]].append(r)
         else:
@@ -168,10 +185,9 @@ def render_index(runs: list[dict], site_dir: Path) -> None:
         primary = group[0]
         st = html.escape(str(primary.get("status", "")))
         project = html.escape(str(primary.get("project") or "?"))
-        pr = primary.get("pr_id")
         history = group[1:]
-        if history and pr not in (None, ""):
-            group_key = html.escape(f"{primary.get('project') or '?'}:{pr}")
+        if history:
+            group_key = html.escape(group_label(primary))
             n = len(history)
             toggle = (
                 f'<button type="button" class="group-toggle" aria-expanded="false" '

@@ -112,9 +112,10 @@ from pathlib import Path
 html = Path("$SMOKE_DATA/site/index.html").read_text(encoding="utf-8")
 i_new = html.find("grp-new")
 i_old = html.find("grp-old")
-i_hist = html.find('class="run-history"')
-assert i_new > 0 and i_old > 0 and i_hist > 0, (i_new, i_old, i_hist)
-assert i_new < i_hist < i_old, "newest primary before history/old"
+assert i_new > 0 and i_old > 0 and i_new < i_old, (i_new, i_old)
+# grp-old folded under same PR group (not the first history row on page — main may group too)
+snip = html[i_new:i_old + 20]
+assert 'class="run-history"' in snip and 'data-group="smoke:42"' in snip, snip[:200]
 ts_new = datetime.fromtimestamp(2000).strftime("%Y-%m-%d %H:%M:%S")
 ts_old = datetime.fromtimestamp(1000).strftime("%Y-%m-%d %H:%M:%S")
 assert ts_new in html and ts_old in html, (ts_new, ts_old)
@@ -122,6 +123,52 @@ assert html.find(ts_new) < html.find(ts_old), "newer finished time should appear
 print("pr group dashboard ok")
 PY
 rm -f "$SMOKE_DATA/runs/grp-old.meta.json" "$SMOKE_DATA/runs/grp-new.meta.json"
+
+# Dashboard: same project+branch (e.g. main) groups like PRs
+python3 - <<PY
+import json
+from pathlib import Path
+
+runs = Path("$SMOKE_DATA") / "runs"
+base = {
+    "project": "smoke",
+    "kind": "branch",
+    "ref": "main",
+    "pr_id": None,
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "exit_code": 1,
+    "started": 1000,
+    "duration": 10,
+    "timeout_sec": 60,
+    "log": "",
+}
+(runs / "br-old.meta.json").write_text(
+    json.dumps({**base, "id": "br-old", "finished": 1000, "status": "failure"}),
+    encoding="utf-8",
+)
+(runs / "br-new.meta.json").write_text(
+    json.dumps(
+        {**base, "id": "br-new", "finished": 2000, "status": "success", "exit_code": 0}
+    ),
+    encoding="utf-8",
+)
+PY
+"$ROOT/bin/watchci" rebuild-site
+idx="$SMOKE_DATA/site/index.html"
+grep -q 'data-group="smoke:branch:main"' "$idx" || { echo "FAIL: missing data-group smoke:branch:main"; exit 1; }
+python3 - <<PY
+from pathlib import Path
+html = Path("$SMOKE_DATA/site/index.html").read_text(encoding="utf-8")
+# fixture ids may sit under real main runs; require both in the main branch group fold
+assert 'data-group="smoke:branch:main"' in html
+i_new = html.find("br-new")
+i_old = html.find("br-old")
+assert i_new > 0 and i_old > 0 and i_new < i_old, (i_new, i_old)
+snip = html[html.find('data-group="smoke:branch:main"') : i_old + 20]
+assert "br-old" in snip and 'class="run-history"' in snip
+print("branch group dashboard ok")
+PY
+rm -f "$SMOKE_DATA/runs/br-old.meta.json" "$SMOKE_DATA/runs/br-new.meta.json"
 "$ROOT/bin/watchci" rebuild-site
 
 # Env override must win over conf (ADMIN_ENABLE=false in smoke conf)
