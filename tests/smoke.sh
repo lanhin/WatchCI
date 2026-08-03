@@ -970,13 +970,14 @@ bash -c '
   source "$ROOT/lib/report.sh"
   meta="$TMP/pr-comment.meta.json"
   cat >"$meta" <<EOF
-{"id":"run-abc","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef0123456789","status":"success","exit_code":0,"duration":12,"attempts":1}
+{"id":"run-abc","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef0123456789","status":"success","exit_code":0,"duration":12,"attempts":1,"finished":1700000000}
 EOF
   SITE_PUBLIC_URL="https://ci.example.com"
   body="$(report_pr_comment_body "$meta")"
   echo "$body" | grep -q "✅ WatchCI · success" || { echo "FAIL: body status"; exit 1; }
   echo "$body" | grep -q "https://ci.example.com/runs/run-abc/" || { echo "FAIL: body link"; exit 1; }
   echo "$body" | grep -q "<!-- watchci -->" || { echo "FAIL: body marker"; exit 1; }
+  echo "$body" | grep -qE '^- updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$' || { echo "FAIL: body updated"; echo "$body"; exit 1; }
   # failure / timeout headlines
   cat >"$meta" <<EOF
 {"id":"run-fail","project":"demo","kind":"pr","pr_id":"7","sha":"abcdef01","status":"failure","exit_code":1,"duration":3,"attempts":2}
