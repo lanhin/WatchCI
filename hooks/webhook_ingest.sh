@@ -50,6 +50,14 @@ case "$PROVIDER/$EVENT" in
     sha="$(echo "$payload" | jq -r '.pull_request.head.sha // empty')"
     branch="$(echo "$payload" | jq -r '.pull_request.head.ref // empty')"
     base_ref="$(echo "$payload" | jq -r '.pull_request.base.ref // empty')"
+    # Skip WIP/draft PRs (same rules as provider_jq_skip_wip).
+    if echo "$payload" | jq -e '
+      (.pull_request.draft == true)
+      or (.pull_request.work_in_progress == true)
+      or ((.pull_request.title // "") | test("^\\[WIP\\]"; "i"))
+    ' >/dev/null; then
+      exit 0
+    fi
     # Optional: WATCHCI_BRANCHES=main,release/* — skip PRs not targeting watched bases.
     if [[ -n "${WATCHCI_BRANCHES:-}" && -n "$base_ref" ]]; then
       matched=0

@@ -30,7 +30,7 @@ provider_list_open_prs() {
     local count
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -eq 0 ]] && break
-    echo "$json" | jq -r '
+    echo "$json" | provider_jq_skip_wip | jq -r '
       .[] | [
         (.number // .id),
         (.head.sha // .sha // ""),

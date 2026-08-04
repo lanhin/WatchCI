@@ -528,6 +528,12 @@ echo "$out" | grep -q '"kind": "pr"' || echo "$out" | grep -q '"kind":"pr"' || {
 echo "$out" | grep -q '"base": "main"' || echo "$out" | grep -q '"base":"main"' || { echo "FAIL: missing base=main"; echo "$out"; exit 1; }
 echo "webhook pr base filter ok"
 
+# webhook: WIP/draft PR ignored
+pr_wip='{"action":"opened","pull_request":{"number":122,"title":"[WIP] feat","draft":true,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd","ref":"feat/wip"},"base":{"ref":"main"}}}'
+out="$(echo "$pr_wip" | WATCHCI_PROJECT=smoke WATCHCI_BRANCHES=main "$ROOT/hooks/webhook_ingest.sh" github pull_request || true)"
+[[ -z "$out" ]] || { echo "FAIL: WIP PR should be ignored"; echo "$out"; exit 1; }
+echo "webhook pr wip skip ok"
+
 # webhook ingest smoke
 payload='{"ref":"refs/heads/main","after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 out="$(echo "$payload" | WATCHCI_PROJECT=smoke "$ROOT/hooks/webhook_ingest.sh" github push)"
@@ -965,6 +971,20 @@ bash -c '
   provider_comment_skip_downgrade "$fail_body" "failure" "abcdef0123456789" && { echo "FAIL: old failure should not skip"; exit 1; }
   provider_comment_skip_downgrade "$success_body" "success" "abcdef0123456789" && { echo "FAIL: new success should not skip"; exit 1; }
   echo "pr comment skip downgrade ok"
+
+  # WIP/draft filter (provider_jq_skip_wip); avoid single quotes in this bash -c block
+  wip_in="$(jq -n "[
+    {\"number\":1,\"title\":\"feat: normal\",\"draft\":false},
+    {\"number\":2,\"title\":\"[WIP] feat(kv-cache): pool\",\"draft\":true},
+    {\"number\":3,\"title\":\"[WIP]更多冒烟\",\"draft\":true},
+    {\"number\":4,\"title\":\"feat: almost done\",\"draft\":true},
+    {\"number\":5,\"title\":\"[wip] lowercase\",\"draft\":false},
+    {\"number\":6,\"title\":\"ready\",\"work_in_progress\":true}
+  ]")"
+  wip_out="$(printf "%s" "$wip_in" | provider_jq_skip_wip)"
+  nums="$(echo "$wip_out" | jq -r "[.[].number] | join(\",\")")"
+  [[ "$nums" == "1" ]] || { echo "FAIL: skip wip got numbers=$nums want=1"; exit 1; }
+  echo "provider_jq_skip_wip ok"
 
   # shellcheck source=/dev/null
   source "$ROOT/lib/report.sh"

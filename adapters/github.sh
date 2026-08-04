@@ -30,7 +30,7 @@ provider_list_open_prs() {
     local count
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -eq 0 ]] && break
-    echo "$json" | jq -r --arg labels "${PR_LABELS:-}" '
+    echo "$json" | provider_jq_skip_wip | jq -r --arg labels "${PR_LABELS:-}" '
       def ok:
         ($labels | length == 0) or
         (($labels | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))) as $want

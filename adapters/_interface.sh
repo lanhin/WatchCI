@@ -9,6 +9,7 @@
 #   Prints TSV lines: pr_id \t head_sha \t head_branch \t url \t base_branch
 #   Uses env from loaded project: OWNER REPO API_BASE TOKEN_ENV PROJECT_ID PR_LABELS
 #   Caller filters by base_branch against BRANCHES.
+#   Adapters drop WIP/draft PRs via provider_jq_skip_wip (title ^[WIP], draft, work_in_progress).
 #
 # provider_pr_head_sha <id>   (optional)
 #   Prints head sha for one PR/MR.
@@ -26,6 +27,15 @@ provider_token() {
     return 0
   fi
   printenv "$env_name" || true
+}
+
+# Drop WIP/draft PRs before TSV emit. stdin: PR JSON array → stdout: filtered array.
+provider_jq_skip_wip() {
+  jq '[.[] | select(
+    ((.title // "") | test("^\\[WIP\\]"; "i") | not)
+    and ((.draft // false) != true)
+    and ((.work_in_progress // false) != true)
+  )]'
 }
 
 # Redact secrets for log lines (Bearer / PRIVATE-TOKEN / access_token=).

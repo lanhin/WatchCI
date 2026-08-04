@@ -37,7 +37,7 @@ provider_list_open_prs() {
     local count
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -eq 0 ]] && break
-    echo "$json" | jq -r '
+    echo "$json" | provider_jq_skip_wip | jq -r '
       .[] | [.iid, .sha, .source_branch, (.web_url // ""), (.target_branch // "")] | @tsv
     '
     [[ "$count" -lt 100 ]] && break
