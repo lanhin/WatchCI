@@ -211,6 +211,9 @@ assert "REPO_URL" in d
 assert "POLL_INTERVAL_SEC" not in [f["key"] for f in mod.PROJECT_SCHEMA]
 assert any(f["key"] == "POLL_INTERVAL_SEC" for f in mod.GLOBAL_SCHEMA)
 assert any(f["key"] == "ALLOW_MANUAL_RERUN" for f in mod.PROJECT_SCHEMA)
+assert any(f["key"] == "SKIP_IF_PR_SUCCESS_COMMENT" for f in mod.PROJECT_SCHEMA)
+assert "skipped" in mod.RERUN_STATUSES
+assert "failure" in mod.RERUN_STATUSES
 gfr = next(f for f in mod.GLOBAL_SCHEMA if f["key"] == "DEFAULT_FAIL_RETRIES")
 assert "最大 8" in gfr["help"]
 pfr = next(f for f in mod.PROJECT_SCHEMA if f["key"] == "FAIL_RETRIES")
@@ -861,6 +864,40 @@ except ValueError as e:
 (runs / f"{pr_cur}.meta.json").unlink()
 (runs / f"{pr_old}.meta.json").unlink()
 
+# skipped status is rerunnable (force re-run after success-comment skip)
+for f in pending.glob("*.json"):
+    f.unlink()
+skip_id = "smoke-skip-rerun-1"
+skip_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+(runs / f"{skip_id}.meta.json").write_text(
+    json.dumps(
+        {
+            **meta,
+            "id": skip_id,
+            "kind": "pr",
+            "ref": "feat/skip",
+            "pr_id": "42",
+            "sha": skip_sha,
+            "status": "skipped",
+            "exit_code": 0,
+            "finished": 40,
+        }
+    ),
+    encoding="utf-8",
+)
+(state_dir / "smoke.tsv").write_text(
+    f"pr\t42\t{skip_sha}\tskipped\t{skip_id}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
+assert skip_id in {r["id"] for r in app.list_runs()}
+rs = app.rerun_run(skip_id)
+assert rs.get("ok") and rs.get("event_id"), rs
+evs = json.loads(list(pending.glob("*.json"))[0].read_text(encoding="utf-8"))
+assert evs["source"] == "manual" and evs["sha"] == skip_sha and evs["pr_id"] == "42"
+assert not (runs / f"{skip_id}.meta.json").is_file()
+for f in pending.glob("*.json"):
+    f.unlink()
+
 # gate: ALLOW_MANUAL_RERUN=false
 conf = Path("$TMP/config/projects/smoke.conf")
 text = conf.read_text(encoding="utf-8")
@@ -971,6 +1008,11 @@ bash -c '
   provider_comment_skip_downgrade "$fail_body" "failure" "abcdef0123456789" && { echo "FAIL: old failure should not skip"; exit 1; }
   provider_comment_skip_downgrade "$success_body" "success" "abcdef0123456789" && { echo "FAIL: new success should not skip"; exit 1; }
   echo "pr comment skip downgrade ok"
+
+  provider_comment_is_success_for_sha "$success_body" "abcdef0123456789" || { echo "FAIL: expect success for sha"; exit 1; }
+  provider_comment_is_success_for_sha "$success_body" "deadbeef12345678" && { echo "FAIL: different sha not success"; exit 1; }
+  provider_comment_is_success_for_sha "$fail_body" "abcdef0123456789" && { echo "FAIL: failure body not success"; exit 1; }
+  echo "pr comment is success for sha ok"
 
   # WIP/draft filter (provider_jq_skip_wip); avoid single quotes in this bash -c block
   wip_in="$(jq -n "[

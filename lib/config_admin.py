@@ -19,7 +19,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOG_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.log$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 FINISHED_MARK = "=== finished "
-RERUN_STATUSES = frozenset({"failure", "timeout"})
+RERUN_STATUSES = frozenset({"failure", "timeout", "skipped"})
 
 
 # group id (internal) -> Chinese label for UI
@@ -242,6 +242,13 @@ PROJECT_SCHEMA = [
         "label": "回写 PR 评论",
         "help": "跑完后置顶更新一条结果评论（GitHub/Gitee/GitCode）。见 docs/pr-comment-setup.md。",
         "group": "run",
+    },
+    {
+        "key": "SKIP_IF_PR_SUCCESS_COMMENT",
+        "label": "成功评论则跳过",
+        "help": "需同时开启回写评论：若 PR 上已有同 SHA 的 success 评论则跳过 CI（写入 skipped，可在现场强制重跑）。",
+        "group": "run",
+        "default": "false",
     },
     {
         "key": "DAILY_ENABLE",
@@ -868,7 +875,7 @@ class App:
         meta = self._read_run_meta(run_id)
         status = str(meta.get("status") or "")
         if status not in RERUN_STATUSES:
-            raise ValueError("仅 failure / timeout 可重跑")
+            raise ValueError("仅 failure / timeout / skipped 可重跑")
         project = str(meta.get("project") or "")
         if not project:
             raise ValueError("run 缺少 project")

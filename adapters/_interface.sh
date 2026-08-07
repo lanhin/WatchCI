@@ -14,6 +14,9 @@
 # provider_pr_head_sha <id>   (optional)
 #   Prints head sha for one PR/MR.
 #
+# provider_get_pr_sticky_comment <pr_id>   (optional; github/gitee/gitcode)
+#   Prints compact JSON {id,body} of sticky comment, or empty if none.
+#
 # provider_upsert_pr_comment <pr_id> <body> <status> <sha>   (optional; github/gitee/gitcode)
 #   Create or update sticky PR comment whose body contains WATCHCI_COMMENT_MARKER.
 #   Skips PATCH when new status is failure/timeout, existing comment is success, same sha8.
@@ -108,20 +111,26 @@ provider_comment_find_id() {
   provider_comment_find_match | jq -r '.id // empty'
 }
 
+# Return 0 if sticky body is WatchCI · success for the same sha8 as <sha>.
+provider_comment_is_success_for_sha() {
+  local body="$1" sha="$2"
+  local old_status old_sha8 new_sha8
+  old_status="$(printf '%s\n' "$body" | sed -n 's/.*WatchCI · \([a-z]*\).*/\1/p' | head -1)"
+  [[ "$old_status" == "success" ]] || return 1
+  old_sha8="$(printf '%s\n' "$body" | sed -n 's/.*sha: `\([0-9a-fA-F]*\)`.*/\1/p' | head -1)"
+  [[ -n "$old_sha8" ]] || return 1
+  new_sha8="${sha:0:8}"
+  [[ "$old_sha8" == "$new_sha8" ]] || return 1
+  return 0
+}
+
 # Return 0 = skip PATCH (do not overwrite success with failure/timeout on same sha8).
 provider_comment_skip_downgrade() {
   local old_body="$1" new_status="$2" new_sha="$3"
-  local old_status old_sha8 new_sha8
   case "$new_status" in
     failure|timeout) ;;
     *) return 1 ;;
   esac
-  old_status="$(printf '%s\n' "$old_body" | sed -n 's/.*WatchCI · \([a-z]*\).*/\1/p' | head -1)"
-  [[ "$old_status" == "success" ]] || return 1
-  old_sha8="$(printf '%s\n' "$old_body" | sed -n 's/.*sha: `\([0-9a-fA-F]*\)`.*/\1/p' | head -1)"
-  [[ -n "$old_sha8" ]] || return 1
-  new_sha8="${new_sha:0:8}"
-  [[ "$old_sha8" == "$new_sha8" ]] || return 1
-  return 0
+  provider_comment_is_success_for_sha "$old_body" "$new_sha"
 }
 

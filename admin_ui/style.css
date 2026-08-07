@@ -980,6 +980,9 @@ details.field-group {
 #rerun-list .status-timeout {
   color: #b42318;
 }
+#rerun-list .status-skipped {
+  color: #6b7280;
+}
 .visually-hidden {
   position: absolute;
   width: 1px;

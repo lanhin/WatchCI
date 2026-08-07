@@ -51,17 +51,15 @@ provider_pr_head_sha() {
   provider_api_get $(provider_auth_args) "${base}/repos/${owner}/${repo}/pulls/${id}" | jq -r '.head.sha'
 }
 
-# Upsert sticky WatchCI comment on a PR.
+# Find sticky WatchCI comment on a PR. stdout: compact JSON {id,body} or empty.
 # GitHub: PR conversation comments use the Issues comments API (PRs are issues).
-provider_upsert_pr_comment() {
-  local pr_id="$1" body="$2" status="${3:-}" sha="${4:-}"
-  local base owner repo page json count cid old_body match payload
+provider_get_pr_sticky_comment() {
+  local pr_id="$1"
+  local base owner repo page json count match
   base="$(provider_default_api_base)"
   owner="${OWNER:?OWNER required}"
   repo="${REPO:?REPO required}"
   [[ -n "$pr_id" ]] || return 1
-  cid=""
-  old_body=""
   page=1
   while [[ "$page" -le 5 ]]; do
     # shellcheck disable=SC2046
@@ -69,14 +67,31 @@ provider_upsert_pr_comment() {
       "${base}/repos/${owner}/${repo}/issues/${pr_id}/comments?per_page=100&page=${page}")" || return 1
     match="$(echo "$json" | provider_comment_find_match)"
     if [[ -n "$match" ]]; then
-      cid="$(jq -r '.id // empty' <<<"$match")"
-      old_body="$(jq -r '.body // empty' <<<"$match")"
-      break
+      printf '%s\n' "$match"
+      return 0
     fi
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -lt 100 ]] && break
     page=$((page + 1))
   done
+  return 0
+}
+
+# Upsert sticky WatchCI comment on a PR.
+provider_upsert_pr_comment() {
+  local pr_id="$1" body="$2" status="${3:-}" sha="${4:-}"
+  local base owner repo cid old_body match payload
+  base="$(provider_default_api_base)"
+  owner="${OWNER:?OWNER required}"
+  repo="${REPO:?REPO required}"
+  [[ -n "$pr_id" ]] || return 1
+  match="$(provider_get_pr_sticky_comment "$pr_id")" || return 1
+  cid=""
+  old_body=""
+  if [[ -n "$match" ]]; then
+    cid="$(jq -r '.id // empty' <<<"$match")"
+    old_body="$(jq -r '.body // empty' <<<"$match")"
+  fi
   payload="$(jq -n --arg body "$body" '{body:$body}')"
   if [[ -n "$cid" ]]; then
     if provider_comment_skip_downgrade "$old_body" "$status" "$sha"; then

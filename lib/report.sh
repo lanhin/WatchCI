@@ -48,6 +48,31 @@ report_pr_comment_body() {
   printf '%s\n' "" "${marker}"
 }
 
+# Return 0 if PR sticky is already success for this sha (caller should skip CI).
+# Requires project env loaded. API / adapter failure → return 1 (do not skip).
+report_pr_should_skip_run() {
+  local pr_id="$1" sha="$2"
+  local ap match body
+  [[ "${SKIP_IF_PR_SUCCESS_COMMENT:-false}" == "true" || "${SKIP_IF_PR_SUCCESS_COMMENT:-false}" == "1" ]] || return 1
+  [[ "${POST_PR_COMMENT:-false}" == "true" || "${POST_PR_COMMENT:-false}" == "1" ]] || return 1
+  [[ -n "$pr_id" && -n "$sha" ]] || return 1
+  case "${PROVIDER:-}" in
+    github|gitee|gitcode) ;;
+    *) return 1 ;;
+  esac
+  ap="$WATCHCI_ROOT/adapters/${PROVIDER}.sh"
+  [[ -f "$ap" ]] || return 1
+  # shellcheck source=/dev/null
+  source "$ap"
+  declare -F provider_get_pr_sticky_comment >/dev/null 2>&1 || return 1
+  declare -F provider_comment_is_success_for_sha >/dev/null 2>&1 || return 1
+  match="$(provider_get_pr_sticky_comment "$pr_id")" || return 1
+  [[ -n "$match" ]] || return 1
+  body="$(jq -r '.body // empty' <<<"$match")"
+  [[ -n "$body" ]] || return 1
+  provider_comment_is_success_for_sha "$body" "$sha"
+}
+
 # After a PR run: upsert sticky comment. No-op unless POST_PR_COMMENT and kind=pr.
 # Requires project env already loaded (PROVIDER, OWNER, REPO, TOKEN_ENV, POST_PR_COMMENT).
 report_pr_comment() {

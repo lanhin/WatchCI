@@ -179,6 +179,61 @@ run_event() {
     return 0
   fi
 
+  # success sticky already covers this sha → record skipped, no clone (manual always runs)
+  if [[ "$kind" == "pr" && -n "$pr_id" && "$source" != "manual" ]] \
+    && report_pr_should_skip_run "$pr_id" "$sha"; then
+    local run_id start_epoch end_epoch log_path meta
+    run_id="$(make_id)"
+    start_epoch="$(epoch_now)"
+    end_epoch="$start_epoch"
+    log_path="$DATA_DIR/logs/$NAME/${run_id}-${sha:0:8}.log"
+    mkdir -p "$(dirname "$log_path")" "$DATA_DIR/runs"
+    {
+      echo "=== WatchCI run $run_id ==="
+      echo "project=$NAME kind=$kind ref=$ref pr_id=$pr_id source=$source sha=$sha"
+      echo "started=$(iso_now)"
+      echo "skipped: success PR comment matches sha=${sha:0:8}"
+    } >"$log_path"
+    meta="$DATA_DIR/runs/${run_id}.meta.json"
+    if command -v jq >/dev/null 2>&1; then
+      jq -n \
+        --arg id "$run_id" \
+        --arg project "$NAME" \
+        --arg kind "$kind" \
+        --arg ref "$ref" \
+        --arg pr_id "$pr_id" \
+        --arg sha "$sha" \
+        --arg status "skipped" \
+        --arg source "$source" \
+        --argjson exit_code 0 \
+        --argjson started "$start_epoch" \
+        --argjson finished "$end_epoch" \
+        --argjson duration 0 \
+        --argjson timeout_sec "${TIMEOUT_SEC:-0}" \
+        --argjson attempts 0 \
+        --arg log "$log_path" \
+        '{
+          id:$id, project:$project, kind:$kind, ref:$ref,
+          pr_id:(if $pr_id=="" then null else $pr_id end),
+          sha:$sha, status:$status, source:$source, exit_code:$exit_code,
+          started:$started, finished:$finished, duration:$duration,
+          timeout_sec:$timeout_sec, attempts:$attempts, log:$log
+        }' >"$meta"
+    else
+      cat >"$meta" <<EOF
+{"id":"$run_id","project":"$NAME","kind":"$kind","ref":"$ref","pr_id":"$pr_id","sha":"$sha","status":"skipped","source":"$source","exit_code":0,"started":$start_epoch,"finished":$end_epoch,"duration":0,"timeout_sec":${TIMEOUT_SEC:-0},"attempts":0,"log":"$log_path"}
+EOF
+    fi
+    tracked="$(state_get_sha "$state_kind" "$state_key")"
+    if [[ -z "$tracked" || "$tracked" == "$sha" ]]; then
+      state_set "$state_kind" "$state_key" "$sha" "skipped" "$run_id"
+    fi
+    site_update_after_run "$run_id" || warn "site update failed"
+    event_mark_done "$event_path"
+    info "skip pr run $run_id project=$NAME pr=$pr_id sha=${sha:0:8} (success comment)"
+    return 0
+  fi
+
   ensure_clone
   local run_id start_epoch end_epoch exit_code status
   run_id="$(make_id)"

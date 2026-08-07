@@ -78,6 +78,7 @@ export GITCODE_TOKEN=你的令牌
 | `TOKEN_ENV` | 环境变量**名**，如 `GITHUB_TOKEN` / `GITEE_TOKEN` / `GITCODE_TOKEN`（不是令牌字符串本身） |
 | `WATCH_PRS` | `true` |
 | `POST_PR_COMMENT` | `true`（打开后才会回写评论，默认是关的） |
+| `SKIP_IF_PR_SUCCESS_COMMENT` | `true`（可选：已有同 SHA 的 success 评论则跳过 CI；现场「可重跑」可强制再跑） |
 | `PROVIDER` | `github` / `gitee` / `gitcode` |
 
 ### 全局配置（可选，`config/watchci.conf`）
@@ -120,6 +121,7 @@ POST_PR_COMMENT=true
 | 现象 | 可能原因 |
 |------|----------|
 | 完全没有评论 | `POST_PR_COMMENT` 未开；或这次不是 PR 事件（分支推送不会评论） |
+| 明明跑过却被跳过 | 开了 `SKIP_IF_PR_SUCCESS_COMMENT`，且 PR 上已有同 SHA 的 success 评论；要再跑可在现场「可重跑」强制重跑（`source=manual`） |
 | 403 / 日志里 pr comment failed | 令牌权限不够，或账号对仓库没有评论权限 |
 | 有评论但没有详情链接 | 未设置 `SITE_PUBLIC_URL` |
 | 令牌写进了 `.conf` | 请删掉，改成只写 `TOKEN_ENV=变量名`，令牌只放环境变量 |

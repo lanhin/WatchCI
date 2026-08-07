@@ -54,19 +54,16 @@ provider_pr_head_sha() {
     "${base}/repos/${owner}/${repo}/pulls/${id}" | jq -r '.head.sha // .sha'
 }
 
-# Upsert sticky WatchCI comment on a PR (GitCode pulls comments API).
+# Find sticky WatchCI comment. stdout: compact JSON {id,body} or empty.
 # Auth: access_token query (same as official curl), not Bearer.
-# GET/POST .../pulls/{number}/comments ; PATCH .../pulls/comments/{id}
-provider_upsert_pr_comment() {
-  local pr_id="$1" body="$2" status="${3:-}" sha="${4:-}"
-  local base owner repo tok page json count cid old_body match payload url
+provider_get_pr_sticky_comment() {
+  local pr_id="$1"
+  local base owner repo tok page json count match url
   base="$(provider_default_api_base)"
   owner="${OWNER:?OWNER required}"
   repo="${REPO:?REPO required}"
   tok="$(provider_token)"
   [[ -n "$pr_id" ]] || return 1
-  cid=""
-  old_body=""
   page=1
   while [[ "$page" -le 5 ]]; do
     url="${base}/repos/${owner}/${repo}/pulls/${pr_id}/comments?page=${page}&per_page=100&comment_type=pr_comment"
@@ -74,14 +71,33 @@ provider_upsert_pr_comment() {
     json="$(provider_api_get -H "Accept: application/json" "$url")" || return 1
     match="$(echo "$json" | provider_comment_find_match)"
     if [[ -n "$match" ]]; then
-      cid="$(jq -r '.id // empty' <<<"$match")"
-      old_body="$(jq -r '.body // empty' <<<"$match")"
-      break
+      printf '%s\n' "$match"
+      return 0
     fi
     count="$(echo "$json" | jq 'length')"
     [[ "$count" -lt 100 ]] && break
     page=$((page + 1))
   done
+  return 0
+}
+
+# Upsert sticky WatchCI comment on a PR (GitCode pulls comments API).
+# GET/POST .../pulls/{number}/comments ; PATCH .../pulls/comments/{id}
+provider_upsert_pr_comment() {
+  local pr_id="$1" body="$2" status="${3:-}" sha="${4:-}"
+  local base owner repo tok cid old_body match payload url
+  base="$(provider_default_api_base)"
+  owner="${OWNER:?OWNER required}"
+  repo="${REPO:?REPO required}"
+  tok="$(provider_token)"
+  [[ -n "$pr_id" ]] || return 1
+  match="$(provider_get_pr_sticky_comment "$pr_id")" || return 1
+  cid=""
+  old_body=""
+  if [[ -n "$match" ]]; then
+    cid="$(jq -r '.id // empty' <<<"$match")"
+    old_body="$(jq -r '.body // empty' <<<"$match")"
+  fi
   payload="$(jq -n --arg body "$body" '{body:$body}')"
   if [[ -n "$cid" ]]; then
     if provider_comment_skip_downgrade "$old_body" "$status" "$sha"; then

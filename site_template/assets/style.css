@@ -46,10 +46,12 @@ body {
 .card.status-success { border-left-color: var(--ok); }
 .card.status-failure { border-left-color: var(--fail); }
 .card.status-timeout { border-left-color: var(--warn); }
+.card.status-skipped { border-left-color: #6b7280; }
 .badge { font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
 .status-success { color: var(--ok); }
 .status-failure { color: var(--fail); }
 .status-timeout { color: var(--warn); }
+.status-skipped { color: #6b7280; }
 table {
   width: 100%;
   border-collapse: collapse;

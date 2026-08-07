@@ -21,10 +21,16 @@
     "ENABLED",
     "ALLOW_MANUAL_RERUN",
     "POST_PR_COMMENT",
+    "SKIP_IF_PR_SUCCESS_COMMENT",
     "DAILY_ENABLE",
   ]);
   // ponytail: missing conf → these default false (others default true)
-  const BOOL_DEFAULT_FALSE = new Set(["AUTO_PUBLISH", "POST_PR_COMMENT", "DAILY_ENABLE"]);
+  const BOOL_DEFAULT_FALSE = new Set([
+    "AUTO_PUBLISH",
+    "POST_PR_COMMENT",
+    "SKIP_IF_PR_SUCCESS_COMMENT",
+    "DAILY_ENABLE",
+  ]);
 
   const $ = (id) => document.getElementById(id);
   const msgTimers = Object.create(null);
@@ -613,6 +619,7 @@
       TOKEN_ENV: "GITHUB_TOKEN",
       ALLOW_MANUAL_RERUN: "true",
       POST_PR_COMMENT: "false",
+      SKIP_IF_PR_SUCCESS_COMMENT: "false",
       DAILY_ENABLE: "false",
       DAILY_AT: "02:00",
       DAILY_BRANCH: "main",
