@@ -255,11 +255,20 @@
     const res = await fetch("/api/live", { headers: headers() });
     if (!res.ok) return;
     const snap = await res.json();
+    const running = snap.daemon === "running";
     const daemonEl = $("live-daemon");
-    daemonEl.classList.toggle("on", snap.daemon === "running");
-    daemonEl.classList.toggle("off", snap.daemon !== "running");
+    daemonEl.classList.toggle("on", running);
+    daemonEl.classList.toggle("off", !running);
     daemonEl.querySelector(".live-pill-text").textContent =
-      "守护进程 · " + (snap.daemon === "running" ? "运行中" : "未启动");
+      "守护进程 · " + (running ? "运行中" : "已停止");
+    const alertText =
+      snap.alert ||
+      (!running
+        ? "CI 守护进程未运行 — 当前仅配置 UI 在线，轮询与 CI 不会执行。请执行：watchci start"
+        : "");
+    const alertEl = $("live-daemon-alert");
+    alertEl.textContent = alertText;
+    alertEl.classList.toggle("hidden", !alertText);
     $("live-pending").textContent = String(snap.pending || 0);
     $("live-active-n").textContent = String((snap.active || []).length);
     renderLiveList(snap);

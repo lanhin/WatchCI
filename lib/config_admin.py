@@ -579,8 +579,17 @@ class App:
             for d in sorted(state_dir.glob("*.lockdir")):
                 if d.is_dir():
                     locks.append(d.name[: -len(".lockdir")])
+        # Admin UI can run alone (watchci ui); surface that as an alert on 现场.
+        running = self.daemon_running(cfg)
+        alert = None
+        if not running:
+            alert = (
+                "CI 守护进程未运行 — 当前仅配置 UI 在线，轮询与 CI 不会执行。"
+                "请执行：watchci start"
+            )
         return {
-            "daemon": "running" if self.daemon_running(cfg) else "stopped",
+            "daemon": "running" if running else "stopped",
+            "alert": alert,
             "pending": len(pending),
             "pending_ids": pending[:20],
             "locks": locks,

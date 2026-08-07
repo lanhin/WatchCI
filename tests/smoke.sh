@@ -677,6 +677,7 @@ echo "provider_api_get 502 log ok"
 python3 - <<PY
 from pathlib import Path
 import json
+import os
 import importlib.util
 
 spec = importlib.util.spec_from_file_location("config_admin", "$ROOT/lib/config_admin.py")
@@ -926,6 +927,21 @@ except PermissionError:
     pass
 assert (runs / f"{fail_id3}.meta.json").is_file(), "gate fail must keep record"
 print("manual rerun ok")
+
+# 现场：仅 UI 在线时 /api/live 应带守护进程告警
+pid_path = data / "watchci.pid"
+pid_path.unlink(missing_ok=True)
+app_live = mod.App(root, "", pid_path)
+snap = app_live.live_snapshot()
+assert snap["daemon"] == "stopped", snap
+assert snap.get("alert"), snap
+assert "未运行" in snap["alert"], snap
+pid_path.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+snap_ok = app_live.live_snapshot()
+assert snap_ok["daemon"] == "running", snap_ok
+assert not snap_ok.get("alert"), snap_ok
+pid_path.unlink(missing_ok=True)
+print("daemon live alert ok")
 PY
 
 # Admin token: static assets public; /api requires token (css/js must load without ?token=)
