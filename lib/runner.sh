@@ -87,7 +87,9 @@ _checkout_sha() {
   local sha="$1" kind="$2" pr_id="$3" log_path="$4" base_override="${5:-}"
   local pr_ref base
 
-  if ! git -C "$CLONE_DIR" fetch --prune origin >>"$log_path" 2>&1; then
+  # --no-recurse-submodules: PR adding a new submodule leaves no worktree yet;
+  # on-demand recurse then fails (cannot chdir) and aborts a successful FETCH_HEAD.
+  if ! git -C "$CLONE_DIR" fetch --prune --no-recurse-submodules origin >>"$log_path" 2>&1; then
     echo "fetch failed" >>"$log_path"
     return 1
   fi
@@ -95,7 +97,7 @@ _checkout_sha() {
   if [[ "$kind" == "pr" && -n "$pr_id" ]]; then
     pr_ref="$(_pr_head_ref "$pr_id")"
     echo "fetch pr head $pr_ref" >>"$log_path"
-    if ! git -C "$CLONE_DIR" fetch origin "$pr_ref" >>"$log_path" 2>&1; then
+    if ! git -C "$CLONE_DIR" fetch --no-recurse-submodules origin "$pr_ref" >>"$log_path" 2>&1; then
       echo "pr fetch failed ref=$pr_ref" >>"$log_path"
       return 1
     fi

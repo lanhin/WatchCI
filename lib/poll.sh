@@ -103,7 +103,8 @@ _pr_ci_covers_branch_tip() {
 
 poll_branches() {
   local branch sha old run_id
-  git -C "$CLONE_DIR" fetch --prune origin 2>&1 | while read -r line; do info "git: $line"; done || {
+  # See runner.sh: avoid on-demand submodule recurse breaking fetch for new submodule paths.
+  git -C "$CLONE_DIR" fetch --prune --no-recurse-submodules origin 2>&1 | while read -r line; do info "git: $line"; done || {
     warn "git fetch failed for $NAME"
     return 1
   }

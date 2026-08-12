@@ -1157,7 +1157,7 @@ bash -c '
   load_project_file "$PROJECTS_DIR/smoke.conf"
   state_ensure
   ensure_clone
-  git -C "$CLONE_DIR" fetch --prune origin >/dev/null 2>&1
+  git -C "$CLONE_DIR" fetch --prune --no-recurse-submodules origin >/dev/null 2>&1
 
   MAIN_SHA="$(git -C "$CLONE_DIR" rev-parse refs/remotes/origin/main)"
   # Simulate prior successful PR CI at MAIN_SHA + branch already ran once
@@ -1272,7 +1272,7 @@ EOF
   git -C "$TMP/work" push -q origin main
   # absorb the push enqueue without running (state tip)
   NEW_SHA="$(git -C "$TMP/work" rev-parse HEAD)"
-  git -C "$CLONE_DIR" fetch --prune origin >/dev/null 2>&1
+  git -C "$CLONE_DIR" fetch --prune --no-recurse-submodules origin >/dev/null 2>&1
   rm -f "$DATA_DIR/events/pending"/*.json 2>/dev/null || true
   state_set branch main "$NEW_SHA" success after-daily-script
   load_project_file "$PROJECTS_DIR/smoke.conf"
