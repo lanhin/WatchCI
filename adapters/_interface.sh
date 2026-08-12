@@ -134,3 +134,21 @@ provider_comment_skip_downgrade() {
   provider_comment_is_success_for_sha "$old_body" "$new_sha"
 }
 
+# Return 0 = skip PATCH (stale sha must not overwrite a newer sticky across machines).
+# Requires provider_pr_head_sha when sticky sha8 differs from new_sha.
+provider_comment_skip_stale_sha() {
+  local old_body="$1" new_sha="$2" pr_id="$3"
+  local old_sha8 new_sha8 head head8
+  [[ -n "$old_body" && -n "$new_sha" && -n "$pr_id" ]] || return 1
+  old_sha8="$(printf '%s\n' "$old_body" | sed -n 's/.*sha: `\([0-9a-fA-F]*\)`.*/\1/p' | head -1)"
+  [[ -n "$old_sha8" ]] || return 1
+  new_sha8="${new_sha:0:8}"
+  [[ "$old_sha8" == "$new_sha8" ]] && return 1
+  declare -F provider_pr_head_sha >/dev/null 2>&1 || return 0
+  head="$(provider_pr_head_sha "$pr_id" 2>/dev/null)" || return 0
+  [[ -n "$head" && "$head" != "null" ]] || return 0
+  head8="${head:0:8}"
+  [[ "$new_sha8" == "$head8" ]] && return 1
+  return 0
+}
+

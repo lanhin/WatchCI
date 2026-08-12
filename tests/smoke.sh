@@ -1025,6 +1025,19 @@ bash -c '
   provider_comment_skip_downgrade "$success_body" "success" "abcdef0123456789" && { echo "FAIL: new success should not skip"; exit 1; }
   echo "pr comment skip downgrade ok"
 
+  newer_body="$(printf "%s\n" "### ✅ WatchCI · success" "" "- sha: \`deadbeef\`" "" "<!-- watchci -->")"
+  provider_pr_head_sha() { echo "$MOCK_HEAD"; }
+  MOCK_HEAD="deadbeef12345678"
+  provider_comment_skip_stale_sha "$newer_body" "abcdef0123456789" "42" || { echo "FAIL: stale sha should skip when head is newer"; exit 1; }
+  MOCK_HEAD="abcdef0123456789"
+  provider_comment_skip_stale_sha "$newer_body" "abcdef0123456789" "42" && { echo "FAIL: current head sha should not skip"; exit 1; }
+  provider_comment_skip_stale_sha "$success_body" "abcdef0123456789" "42" && { echo "FAIL: same sha should not skip stale"; exit 1; }
+  MOCK_HEAD=""
+  provider_comment_skip_stale_sha "$newer_body" "abcdef0123456789" "42" || { echo "FAIL: empty head should skip (conservative)"; exit 1; }
+  unset -f provider_pr_head_sha
+  provider_comment_skip_stale_sha "$newer_body" "abcdef0123456789" "42" || { echo "FAIL: missing provider_pr_head_sha should skip"; exit 1; }
+  echo "pr comment skip stale sha ok"
+
   provider_comment_is_success_for_sha "$success_body" "abcdef0123456789" || { echo "FAIL: expect success for sha"; exit 1; }
   provider_comment_is_success_for_sha "$success_body" "deadbeef12345678" && { echo "FAIL: different sha not success"; exit 1; }
   provider_comment_is_success_for_sha "$fail_body" "abcdef0123456789" && { echo "FAIL: failure body not success"; exit 1; }

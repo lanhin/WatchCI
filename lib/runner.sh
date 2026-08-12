@@ -373,7 +373,11 @@ EOF
 
   site_update_after_run "$run_id" || warn "site update failed"
 
-  report_pr_comment "$run_id" || warn "pr comment failed"
+  if [[ -z "$tracked" || "$tracked" == "$sha" ]]; then
+    report_pr_comment "$run_id" || warn "pr comment failed"
+  else
+    info "skip stale pr comment project=$NAME $state_kind=$state_key sha=${sha:0:8} tracked=${tracked:0:8}"
+  fi
 
   event_mark_done "$event_path"
   info "run $run_id done status=$status duration=${duration}s timeout_sec=$TIMEOUT_SEC attempts=$attempts"

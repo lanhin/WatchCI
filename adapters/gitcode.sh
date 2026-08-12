@@ -100,6 +100,9 @@ provider_upsert_pr_comment() {
   fi
   payload="$(jq -n --arg body "$body" '{body:$body}')"
   if [[ -n "$cid" ]]; then
+    if provider_comment_skip_stale_sha "$old_body" "$sha" "$pr_id"; then
+      return 0
+    fi
     if provider_comment_skip_downgrade "$old_body" "$status" "$sha"; then
       return 0
     fi
