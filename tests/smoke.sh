@@ -928,6 +928,43 @@ except PermissionError:
 assert (runs / f"{fail_id3}.meta.json").is_file(), "gate fail must keep record"
 print("manual rerun ok")
 
+# delete_run: dismiss failure + siblings; reject success; no pending
+for f in pending.glob("*.json"):
+    f.unlink()
+del_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+del_a = "smoke-fail-delete-a"
+del_b = "smoke-fail-delete-b"
+(runs / f"{del_a}.meta.json").write_text(
+    json.dumps({**meta, "id": del_a, "sha": del_sha, "finished": 30}),
+    encoding="utf-8",
+)
+(runs / f"{del_b}.meta.json").write_text(
+    json.dumps({**meta, "id": del_b, "sha": del_sha, "finished": 40}),
+    encoding="utf-8",
+)
+(state_dir / "smoke.tsv").write_text(
+    f"branch\tmain\t{del_sha}\tfailure\t{del_b}\t2026-01-01T00:00:00Z\n",
+    encoding="utf-8",
+)
+# ALLOW_MANUAL_RERUN still false — delete must not care
+rdel = app.delete_run(del_a)
+assert rdel.get("ok") is True, rdel
+assert not (runs / f"{del_a}.meta.json").is_file(), "deleted primary missing"
+assert not (runs / f"{del_b}.meta.json").is_file(), "sibling should be cleared"
+assert list(pending.glob("*.json")) == [], "delete_run must not enqueue"
+ok_del = "smoke-ok-nodelete"
+(runs / f"{ok_del}.meta.json").write_text(
+    json.dumps({**meta, "id": ok_del, "status": "success", "exit_code": 0, "sha": del_sha}),
+    encoding="utf-8",
+)
+try:
+    app.delete_run(ok_del)
+    raise SystemExit("FAIL: expected ValueError deleting success run")
+except ValueError:
+    pass
+assert (runs / f"{ok_del}.meta.json").is_file(), "success run must remain"
+print("delete run ok")
+
 # 现场：仅 UI 在线时 /api/live 应带守护进程告警
 pid_path = data / "watchci.pid"
 pid_path.unlink(missing_ok=True)

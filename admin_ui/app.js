@@ -54,6 +54,44 @@
     }
   };
 
+  // ponytail: one shared confirm dialog; native confirm() breaks UI chrome
+  const askConfirm = ({ title, body, confirmLabel = "删除" } = {}) =>
+    new Promise((resolve) => {
+      const dlg = $("dlg-confirm");
+      const form = $("form-confirm");
+      $("confirm-title").textContent = title || "确认";
+      $("confirm-body").textContent = body || "";
+      $("confirm-ok").textContent = confirmLabel;
+      const finish = (ok) => {
+        form.removeEventListener("submit", onSubmit);
+        dlg.removeEventListener("cancel", onCancel);
+        dlg.removeEventListener("click", onBackdrop);
+        resolve(ok);
+      };
+      const onSubmit = (e) => {
+        e.preventDefault();
+        const val = e.submitter && e.submitter.value;
+        dlg.close();
+        finish(val === "ok");
+      };
+      const onCancel = (e) => {
+        e.preventDefault();
+        dlg.close();
+        finish(false);
+      };
+      const onBackdrop = (e) => {
+        if (e.target === dlg) {
+          dlg.close();
+          finish(false);
+        }
+      };
+      form.addEventListener("submit", onSubmit);
+      dlg.addEventListener("cancel", onCancel);
+      dlg.addEventListener("click", onBackdrop);
+      dlg.showModal();
+      $("confirm-cancel").focus();
+    });
+
   const setTab = (which) => {
     const tabs = ["live", "global", "projects"];
     for (const t of tabs) {
@@ -341,13 +379,22 @@
         .join(" · ");
       main.appendChild(title);
       main.appendChild(meta);
+      const actions = document.createElement("div");
+      actions.className = "rerun-actions";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-ghost";
       btn.textContent = "重跑";
       btn.onclick = () => doRerun(r.id, btn);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn btn-danger";
+      del.textContent = "删除";
+      del.onclick = () => doDeleteRun(r, del);
+      actions.appendChild(btn);
+      actions.appendChild(del);
       li.appendChild(main);
-      li.appendChild(btn);
+      li.appendChild(actions);
       ul.appendChild(li);
     }
   };
@@ -378,6 +425,38 @@
         if (li) li.remove();
       }
       await refreshLive();
+      await refreshRerun();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  const doDeleteRun = async (run, btn) => {
+    if (!run || !run.id) return;
+    const label = (run.project || "?") + " · " + (run.status || "");
+    const ok = await askConfirm({
+      title: "移除可重跑记录",
+      body: "确认从可重跑列表移除「" + label + "」？将删除本机对应失败记录，不可恢复。",
+      confirmLabel: "删除",
+    });
+    if (!ok) return;
+    if (btn) btn.disabled = true;
+    msg("rerun-msg", "删除中…");
+    try {
+      const res = await fetch("/api/runs/" + encodeURIComponent(run.id), {
+        method: "DELETE",
+        headers: headers(),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        msg("rerun-msg", body.error || "删除失败", true);
+        return;
+      }
+      msg("rerun-msg", "已删除 · " + run.id);
+      if (btn && btn.closest) {
+        const li = btn.closest("li");
+        if (li) li.remove();
+      }
       await refreshRerun();
     } finally {
       if (btn) btn.disabled = false;
@@ -703,7 +782,12 @@
 
   $("delete-project").onclick = async () => {
     if (!currentProject) return;
-    if (!confirm("确认删除项目配置「" + currentProject + "」？不会删除历史运行记录。")) return;
+    const ok = await askConfirm({
+      title: "删除项目配置",
+      body: "确认删除项目配置「" + currentProject + "」？不会删除历史运行记录。",
+      confirmLabel: "删除",
+    });
+    if (!ok) return;
     const res = await fetch("/api/projects/" + encodeURIComponent(currentProject), {
       method: "DELETE",
       headers: headers(),

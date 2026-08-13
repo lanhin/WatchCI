@@ -632,6 +632,17 @@ details.field-group {
   padding-top: 0.25rem;
 }
 
+#dlg-confirm .modal-actions .btn-danger {
+  background: var(--alert);
+  border-color: var(--alert);
+  color: #fff;
+}
+#dlg-confirm .modal-actions .btn-danger:hover {
+  background: #912018;
+  border-color: #912018;
+  color: #fff;
+}
+
 /* —— Responsive —— */
 @media (max-width: 720px) {
   .top-note { text-align: left; max-width: none; }
@@ -980,6 +991,12 @@ details.field-group {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.55);
+}
+#rerun-list .rerun-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
 }
 #rerun-list .rerun-main {
   display: flex;

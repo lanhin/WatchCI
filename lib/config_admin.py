@@ -914,6 +914,16 @@ class App:
         self._delete_matching_failures(meta)
         return result
 
+    def delete_run(self, run_id: str) -> dict:
+        """Remove a failure/timeout/skipped run from the rerun list (no enqueue)."""
+        meta = self._read_run_meta(run_id)
+        status = str(meta.get("status") or "")
+        if status not in RERUN_STATUSES:
+            raise ValueError("仅 failure / timeout / skipped 可删除")
+        # ponytail: same sibling clear as rerun; no ALLOW_MANUAL_RERUN / head gate
+        self._delete_matching_failures(meta)
+        return {"ok": True, "run_id": run_id}
+
 
 def make_handler(app: App, token: str, bind: str):
     class Handler(BaseHTTPRequestHandler):
@@ -1104,6 +1114,18 @@ def make_handler(app: App, token: str, bind: str):
                 return
             parsed = urlparse(self.path)
             path = parsed.path
+            if path.startswith("/api/runs/"):
+                run_id = path[len("/api/runs/") :].strip("/")
+                if not run_id or "/" in run_id:
+                    self._json(404, {"error": "未找到"})
+                    return
+                try:
+                    self._json(200, app.delete_run(run_id))
+                except FileNotFoundError as e:
+                    self._json(404, {"error": str(e)})
+                except ValueError as e:
+                    self._json(400, {"error": str(e)})
+                return
             if not path.startswith("/api/projects/"):
                 self._json(404, {"error": "未找到"})
                 return
