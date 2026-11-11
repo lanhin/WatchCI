@@ -21,6 +21,13 @@
 #   Create or update sticky PR comment whose body contains WATCHCI_COMMENT_MARKER.
 #   Skips PATCH when new status is failure/timeout, existing comment is success, same sha8.
 #
+# provider_create_commit_status <sha> <state> <description> <target_url> <context>   (optional; github/gitee)
+#   POST one commit status. Empty target_url is omitted. Context watchci/daily; UI shows the latest per context.
+#   GitCode's commit page does not render this, so it uses provider_upsert_daily_issue instead.
+#
+# provider_upsert_daily_issue <title> <body>   (optional; gitcode)
+#   Create or update the single issue whose body contains WATCHCI_DAILY_ISSUE_MARKER.
+#
 # Token is read from environment variable named by TOKEN_ENV (never from conf value).
 
 provider_token() {
@@ -98,6 +105,8 @@ provider_api_json() {
 
 # Hidden marker in PR comment body for sticky upsert.
 WATCHCI_COMMENT_MARKER='<!-- watchci -->'
+# Hidden marker in the daily issue body. Distinct from the PR comment marker.
+WATCHCI_DAILY_ISSUE_MARKER='<!-- watchci-daily -->'
 
 # stdin: comments JSON array → stdout: compact JSON {id,body} of first sticky, or empty.
 provider_comment_find_match() {

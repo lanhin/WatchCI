@@ -123,3 +123,63 @@ provider_upsert_pr_comment() {
       "$url" >/dev/null
   fi
 }
+
+# stdout: compact JSON {number,state} of the daily issue, or empty. Scans recent issues.
+_gitcode_find_daily_issue() {
+  local base="$1" owner="$2" repo="$3" tok="$4"
+  local page url json found count
+  page=1
+  while [[ "$page" -le 3 ]]; do
+    url="${base}/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=100&page=${page}"
+    [[ -n "$tok" ]] && url="${url}&access_token=${tok}"
+    json="$(provider_api_get -H "Accept: application/json" "$url")" || return 1
+    found="$(echo "$json" | jq -c --arg m "$WATCHCI_DAILY_ISSUE_MARKER" '
+      if type == "array" then
+        map(select((.body // "") | contains($m))) | .[0] | if . then {number, state} else empty end
+      else empty end
+    ')"
+    if [[ -n "$found" ]]; then
+      printf '%s\n' "$found"
+      return 0
+    fi
+    count="$(echo "$json" | jq 'if type == "array" then length else 0 end')"
+    [[ "$count" -lt 100 ]] && break
+    page=$((page + 1))
+  done
+  return 0
+}
+
+# Create or update the single "WatchCI daily · …" issue. GitCode shows this on the Issues tab;
+# its commit page does not render commit statuses.
+provider_upsert_daily_issue() {
+  local title="$1" body="$2"
+  local base owner repo tok url found number state
+  base="$(provider_default_api_base)"
+  owner="${OWNER:?OWNER required}"
+  repo="${REPO:?REPO required}"
+  tok="$(provider_token)"
+  [[ -n "$title" && -n "$body" ]] || return 1
+  found="$(_gitcode_find_daily_issue "$base" "$owner" "$repo" "$tok")" || return 1
+  if [[ -n "$found" ]]; then
+    number="$(jq -r '.number // empty' <<<"$found")"
+    state="$(jq -r '.state // empty' <<<"$found")"
+    [[ -n "$number" && "$number" != "null" ]] || return 1
+    url="${base}/repos/${owner}/issues/${number}"
+    [[ -n "$tok" ]] && url="${url}?access_token=${tok}"
+    if [[ "$state" == "closed" || "$state" == "close" ]]; then
+      provider_api_json -X PATCH -H "Accept: application/json" \
+        -F "repo=${repo}" -F "title=${title}" -F "body=${body}" -F "state=reopen" \
+        "$url" >/dev/null
+    else
+      provider_api_json -X PATCH -H "Accept: application/json" \
+        -F "repo=${repo}" -F "title=${title}" -F "body=${body}" \
+        "$url" >/dev/null
+    fi
+  else
+    url="${base}/repos/${owner}/issues"
+    [[ -n "$tok" ]] && url="${url}?access_token=${tok}"
+    provider_api_json -X POST -H "Accept: application/json" \
+      -F "repo=${repo}" -F "title=${title}" -F "body=${body}" \
+      "$url" >/dev/null
+  fi
+}

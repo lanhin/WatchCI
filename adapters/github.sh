@@ -114,3 +114,32 @@ provider_upsert_pr_comment() {
   fi
 }
 
+# POST a commit status. Empty target_url is omitted.
+provider_create_commit_status() {
+  local sha="$1" state="$2" description="$3" target_url="$4" context="$5"
+  local base owner repo payload
+  base="$(provider_default_api_base)"
+  owner="${OWNER:?OWNER required}"
+  repo="${REPO:?REPO required}"
+  [[ -n "$sha" ]] || return 1
+  if [[ -n "$target_url" ]]; then
+    payload="$(jq -n \
+      --arg state "$state" \
+      --arg description "$description" \
+      --arg context "$context" \
+      --arg target_url "$target_url" \
+      '{state:$state, description:$description, context:$context, target_url:$target_url}')"
+  else
+    payload="$(jq -n \
+      --arg state "$state" \
+      --arg description "$description" \
+      --arg context "$context" \
+      '{state:$state, description:$description, context:$context}')"
+  fi
+  # shellcheck disable=SC2046
+  provider_api_json $(provider_auth_args) -X POST \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "${base}/repos/${owner}/${repo}/statuses/${sha}" >/dev/null
+}
+

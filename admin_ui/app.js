@@ -23,6 +23,7 @@
     "POST_PR_COMMENT",
     "SKIP_IF_PR_SUCCESS_COMMENT",
     "DAILY_ENABLE",
+    "POST_DAILY_STATUS",
   ]);
   // ponytail: missing conf → these default false (others default true)
   const BOOL_DEFAULT_FALSE = new Set([
@@ -30,6 +31,7 @@
     "POST_PR_COMMENT",
     "SKIP_IF_PR_SUCCESS_COMMENT",
     "DAILY_ENABLE",
+    "POST_DAILY_STATUS",
   ]);
 
   const $ = (id) => document.getElementById(id);
@@ -709,6 +711,7 @@
       POST_PR_COMMENT: "false",
       SKIP_IF_PR_SUCCESS_COMMENT: "false",
       DAILY_ENABLE: "false",
+      POST_DAILY_STATUS: "false",
       DAILY_AT: "02:00",
       DAILY_BRANCH: "main",
       DAILY_SCRIPT: "",

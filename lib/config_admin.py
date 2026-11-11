@@ -253,7 +253,7 @@ PROJECT_SCHEMA = [
     {
         "key": "DAILY_ENABLE",
         "label": "每日补跑",
-        "help": "到点后若当天目标分支尚无完成的 branch CI，则入队一次（不写 PR 评论）。",
+        "help": "到点后若当天目标分支尚无完成的 branch CI，则入队一次（不写 PR 评论；可另写 commit status）。",
         "group": "daily",
         "default": "false",
     },
@@ -276,6 +276,13 @@ PROJECT_SCHEMA = [
         "label": "每日补跑脚本",
         "help": "仅 daily 事件用；空则用 SCRIPT。相对仓库根或绝对路径，可跟参数。",
         "group": "daily",
+    },
+    {
+        "key": "POST_DAILY_STATUS",
+        "label": "发布每日结果",
+        "help": "仅 source=daily 结束时发布。GitHub/Gitee 写 commit status；GitCode 提交页不显示该状态，改为更新一条 issue「WatchCI daily · 状态」。见 docs/pr-comment-setup.md。",
+        "group": "daily",
+        "default": "false",
     },
     {
         "key": "CLONE_DIR",

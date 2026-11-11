@@ -36,8 +36,8 @@ WatchCI 跑完一次 **PR** 测试后，可以在对应 Pull Request 的评论�
 1. 打开 GitHub → 右上角头像 → **Settings**。
 2. 左侧最下方 **Developer settings** → **Personal access tokens**。
 3. 选一种：
-   - **Fine-grained token**：选目标仓库；Permissions 里给 **Issues**、**Pull requests** 至少 **Read and write**（评论走 Issues 评论接口）。
-   - **Classic token**：私有仓勾选 **`repo`**；若只要公开仓，至少勾选能读写 Issues 的权限（例如 `public_repo` / 相关 issue 写权限，以页面为准）。
+   - **Fine-grained token**：选目标仓库；Permissions 里给 **Issues**、**Pull requests** 至少 **Read and write**（评论走 Issues 评论接口）。若还要把每日结果写到提交上（`POST_DAILY_STATUS`），再给 **Commit statuses: Read and write**。
+   - **Classic token**：私有仓勾选 **`repo`**（已包含提交状态）；若只要公开仓，至少勾选能读写 Issues 的权限（例如 `public_repo` / 相关 issue 写权限，以页面为准）。
 4. 生成后复制，在**启动 WatchCI 的那个终端**执行：
 
 ```bash
@@ -128,3 +128,24 @@ POST_PR_COMMENT=true
 | 用 GitLab | 本功能暂不支持，会跳过并告警 |
 
 更多后台说明见仓库 [README.md](../README.md)。
+
+---
+
+## 五、每日补跑的结果发到哪
+
+main 上的每日补跑没有 PR 可评论。项目打开 `POST_DAILY_STATUS=true`（并已开 `DAILY_ENABLE`）后，只有 `source=daily` 的 run 结束时才发布。手动重跑不写。接口失败只打警告，不会把这次 CI 判失败。
+
+GitHub、Gitee 的提交页会显示外部状态，所以写一条 commit status，上下文名 `watchci/daily`：
+
+- 提交页和该分支的提交列表：绿勾或红叉。
+- 一行说明，例如 `failure · exit 1 · 842s · attempts 2`（最长 140 字）。超时记为失败，说明以 `timeout` 开头。
+- 配了 `SITE_PUBLIC_URL` 时，Details 指向 `…/runs/<run_id>/`。
+
+GitCode 的提交页不渲染这条状态。同一开关改为维护 **一条** issue：没有就创建，有就改同一条的标题和正文。到 **Issues** 列表看标题 `WatchCI daily · success`（或 failure / timeout），点进去是和 PR 评论一样的摘要；配了 `SITE_PUBLIC_URL` 时正文里有详情链接。最新一条是失败或超时时，正文还会带上最近一次成功，以及这两者之间的历次 daily；最新一条是成功时只留这一条。
+
+```bash
+DAILY_ENABLE=true
+POST_DAILY_STATUS=true
+```
+
+令牌：GitHub fine-grained 写 commit status 需要 **Commit statuses: Read and write**；classic 的 `repo` 已包含。GitCode 需要能创建并修改 Issue 的令牌。Gitee 沿用能写仓库的令牌。GitLab 会跳过并告警。

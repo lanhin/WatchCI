@@ -375,8 +375,12 @@ EOF
 
   if [[ -z "$tracked" || "$tracked" == "$sha" ]]; then
     report_pr_comment "$run_id" || warn "pr comment failed"
+    report_daily_status "$run_id" || warn "daily status failed"
   else
     info "skip stale pr comment project=$NAME $state_kind=$state_key sha=${sha:0:8} tracked=${tracked:0:8}"
+    if [[ "$source" == "daily" ]]; then
+      info "skip stale daily status project=$NAME $state_kind=$state_key sha=${sha:0:8} tracked=${tracked:0:8}"
+    fi
   fi
 
   event_mark_done "$event_path"

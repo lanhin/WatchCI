@@ -1119,6 +1119,84 @@ EOF
   echo "$body" | grep -q "⏰ WatchCI · timeout" || { echo "FAIL: body timeout"; exit 1; }
   echo "pr comment body ok"
 
+  [[ "$(report_daily_status_state success)" == "success" ]] || { echo "FAIL: daily state success"; exit 1; }
+  [[ "$(report_daily_status_state failure)" == "failure" ]] || { echo "FAIL: daily state failure"; exit 1; }
+  [[ "$(report_daily_status_state timeout)" == "failure" ]] || { echo "FAIL: daily state timeout"; exit 1; }
+  [[ -z "$(report_daily_status_state skipped)" ]] || { echo "FAIL: skipped should not post"; exit 1; }
+  desc="$(report_daily_status_description timeout 124 600 1)"
+  [[ "$desc" == "timeout · exit 124 · 600s · attempts 1" ]] || { echo "FAIL: daily desc got=$desc"; exit 1; }
+  [[ ${#desc} -le 140 ]] || { echo "FAIL: daily desc length"; exit 1; }
+  long_exit="$(printf '%200s' x | tr ' ' x)"
+  long_desc="$(report_daily_status_description failure "$long_exit" 1 1)"
+  [[ ${#long_desc} -eq 140 ]] || { echo "FAIL: clip len=${#long_desc}"; exit 1; }
+  [[ "$long_desc" == *"..." ]] || { echo "FAIL: clip suffix"; exit 1; }
+  echo "daily status description ok"
+
+  export DATA_DIR="$TMP/daily-hist"
+  mkdir -p "$DATA_DIR/runs"
+  SITE_PUBLIC_URL="https://ci.example.com"
+  cat >"$DATA_DIR/runs/only-ok.meta.json" <<EOF
+{"id":"only-ok","project":"demo","kind":"branch","ref":"main","sha":"bbbbbbbb","status":"success","source":"daily","exit_code":0,"duration":3,"attempts":1,"finished":200}
+EOF
+  body="$(report_daily_issue_body "$DATA_DIR/runs/only-ok.meta.json")"
+  echo "$body" | grep -q "bbbbbbbb" || { echo "FAIL: success body missing sha"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "watchci-daily" || { echo "FAIL: success body marker"; echo "$body"; exit 1; }
+  if echo "$body" | grep -q "自上次成功以来"; then
+    echo "FAIL: success body should not keep history"; echo "$body"; exit 1
+  fi
+  echo "daily issue success only ok"
+
+  rm -f "$DATA_DIR/runs/only-ok.meta.json"
+  cat >"$DATA_DIR/runs/old-fail.meta.json" <<EOF
+{"id":"old-fail","project":"demo","kind":"branch","ref":"main","sha":"aaaaaaaa","status":"failure","source":"daily","exit_code":1,"duration":4,"attempts":1,"finished":100}
+EOF
+  cat >"$DATA_DIR/runs/last-ok.meta.json" <<EOF
+{"id":"last-ok","project":"demo","kind":"branch","ref":"main","sha":"bbbbbbbb1111","status":"success","source":"daily","exit_code":0,"duration":5,"attempts":1,"finished":200}
+EOF
+  cat >"$DATA_DIR/runs/mid-fail.meta.json" <<EOF
+{"id":"mid-fail","project":"demo","kind":"branch","ref":"main","sha":"cccccccc","status":"failure","source":"daily","exit_code":2,"duration":6,"attempts":1,"finished":300}
+EOF
+  cat >"$DATA_DIR/runs/new-fail.meta.json" <<EOF
+{"id":"new-fail","project":"demo","kind":"branch","ref":"main","sha":"dddddddd","status":"timeout","source":"daily","exit_code":124,"duration":7,"attempts":1,"finished":400}
+EOF
+  cat >"$DATA_DIR/runs/other-proj.meta.json" <<EOF
+{"id":"other-proj","project":"other","kind":"branch","ref":"main","sha":"eeeeeeee","status":"failure","source":"daily","exit_code":1,"duration":1,"attempts":1,"finished":500}
+EOF
+  cat >"$DATA_DIR/runs/other-ref.meta.json" <<EOF
+{"id":"other-ref","project":"demo","kind":"branch","ref":"dev","sha":"ffffffff","status":"failure","source":"daily","exit_code":1,"duration":1,"attempts":1,"finished":450}
+EOF
+  cat >"$DATA_DIR/runs/poll.meta.json" <<EOF
+{"id":"poll","project":"demo","kind":"branch","ref":"main","sha":"99999999","status":"failure","source":"poll","exit_code":1,"duration":1,"attempts":1,"finished":350}
+EOF
+  body="$(report_daily_issue_body "$DATA_DIR/runs/new-fail.meta.json")"
+  echo "$body" | grep -q "dddddddd" || { echo "FAIL: window missing latest"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "cccccccc" || { echo "FAIL: window missing mid fail"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "bbbbbbbb" || { echo "FAIL: window missing last success"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "自上次成功以来" || { echo "FAIL: window heading"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "runs/last-ok/" || { echo "FAIL: window detail link"; echo "$body"; exit 1; }
+  if echo "$body" | grep -E -q "aaaaaaaa|eeeeeeee|ffffffff|99999999"; then
+    echo "FAIL: window kept a run outside the streak"; echo "$body"; exit 1
+  fi
+  mid_n="$(echo "$body" | grep -n "cccccccc" | head -1 | cut -d: -f1)"
+  ok_n="$(echo "$body" | grep -n "bbbbbbbb" | head -1 | cut -d: -f1)"
+  [[ "$mid_n" -lt "$ok_n" ]] || { echo "FAIL: history order mid=$mid_n success=$ok_n"; echo "$body"; exit 1; }
+  echo "daily issue fail window ok"
+
+  rm -f "$DATA_DIR/runs/"*.meta.json
+  cat >"$DATA_DIR/runs/f1.meta.json" <<EOF
+{"id":"f1","project":"demo","kind":"branch","ref":"main","sha":"11111111","status":"failure","source":"daily","exit_code":1,"duration":1,"attempts":1,"finished":10}
+EOF
+  cat >"$DATA_DIR/runs/f2.meta.json" <<EOF
+{"id":"f2","project":"demo","kind":"branch","ref":"main","sha":"22222222","status":"failure","source":"daily","exit_code":1,"duration":2,"attempts":1,"finished":20}
+EOF
+  body="$(report_daily_issue_body "$DATA_DIR/runs/f2.meta.json")"
+  echo "$body" | grep -q "11111111" || { echo "FAIL: no-success streak dropped older fail"; echo "$body"; exit 1; }
+  echo "$body" | grep -q "22222222" || { echo "FAIL: no-success streak missing latest"; echo "$body"; exit 1; }
+  if echo "$body" | grep -q "success"; then
+    echo "FAIL: no-success streak invented a success"; echo "$body"; exit 1
+  fi
+  echo "daily issue no-success streak ok"
+
   fake="$TMP/fake-curl-bin"
   mkdir -p "$fake"
   # Write fake curl outside nested quoting; path via env for the script body.
@@ -1152,6 +1230,26 @@ case "$method:$url" in
     printf "%s\n" "{\"id\":42}"
     exit 0
     ;;
+  POST:*/statuses/*)
+    printf "%s\n" "{\"id\":1}"
+    exit 0
+    ;;
+  GET:*/issues\?*)
+    if [[ "${FAKE_DAILY_ISSUE:-}" == "update" ]]; then
+      printf "%s\n" "[{\"number\":\"15\",\"state\":\"opened\",\"body\":\"old <!-- watchci-daily -->\"}]"
+    else
+      printf "%s\n" "[]"
+    fi
+    exit 0
+    ;;
+  POST:*/issues\?*)
+    printf "%s\n" "{\"number\":\"15\"}"
+    exit 0
+    ;;
+  PATCH:*/issues/*)
+    printf "%s\n" "{\"number\":\"15\"}"
+    exit 0
+    ;;
 esac
 echo "unexpected curl method=$method url=$url" >&2
 exit 1
@@ -1181,6 +1279,72 @@ FAKE
   fi
   grep -q "comments" "$FAKE_CURL_LOG" || { echo "FAIL: expected GET comments"; cat "$FAKE_CURL_LOG"; exit 1; }
   echo "pr comment skip downgrade upsert ok"
+
+  export DATA_DIR="$TMP/status-data"
+  mkdir -p "$DATA_DIR/runs"
+  cat >"$DATA_DIR/runs/run-daily.meta.json" <<EOF
+{"id":"run-daily","project":"demo","kind":"branch","sha":"abcdef0123456789","status":"timeout","source":"daily","exit_code":124,"duration":600,"attempts":1}
+EOF
+  export POST_DAILY_STATUS=true PROVIDER=github
+  export SITE_PUBLIC_URL="https://ci.example.com"
+  : >"$FAKE_CURL_LOG"
+  report_daily_status run-daily
+  grep -q "/statuses/abcdef0123456789" "$FAKE_CURL_LOG" || { echo "FAIL: status url"; cat "$FAKE_CURL_LOG"; exit 1; }
+  grep -q "watchci/daily" "$FAKE_CURL_LOG" || { echo "FAIL: status context"; cat "$FAKE_CURL_LOG"; exit 1; }
+  grep -q "https://ci.example.com/runs/run-daily/" "$FAKE_CURL_LOG" || { echo "FAIL: status target"; cat "$FAKE_CURL_LOG"; exit 1; }
+  grep -q "timeout · exit 124" "$FAKE_CURL_LOG" || { echo "FAIL: status desc"; cat "$FAKE_CURL_LOG"; exit 1; }
+  echo "daily status post ok"
+
+  export SITE_PUBLIC_URL=
+  cat >"$DATA_DIR/runs/run-daily.meta.json" <<EOF
+{"id":"run-daily","project":"demo","kind":"branch","sha":"abcdef0123456789","status":"success","source":"daily","exit_code":0,"duration":3,"attempts":1}
+EOF
+  : >"$FAKE_CURL_LOG"
+  report_daily_status run-daily
+  grep -q "/statuses/abcdef0123456789" "$FAKE_CURL_LOG" || { echo "FAIL: status url without site"; cat "$FAKE_CURL_LOG"; exit 1; }
+  if grep -q "target_url" "$FAKE_CURL_LOG"; then
+    echo "FAIL: omit target_url when SITE_PUBLIC_URL empty"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  echo "daily status omit target ok"
+
+  export POST_DAILY_STATUS=false
+  : >"$FAKE_CURL_LOG"
+  report_daily_status run-daily
+  [[ ! -s "$FAKE_CURL_LOG" ]] || { echo "FAIL: flag off should not post"; cat "$FAKE_CURL_LOG"; exit 1; }
+  export POST_DAILY_STATUS=true
+  cat >"$DATA_DIR/runs/run-daily.meta.json" <<EOF
+{"id":"run-daily","project":"demo","kind":"branch","sha":"abcdef0123456789","status":"success","source":"poll","exit_code":0,"duration":3,"attempts":1}
+EOF
+  : >"$FAKE_CURL_LOG"
+  report_daily_status run-daily
+  [[ ! -s "$FAKE_CURL_LOG" ]] || { echo "FAIL: non-daily should not post"; cat "$FAKE_CURL_LOG"; exit 1; }
+  echo "daily status skip ok"
+
+  cat >"$DATA_DIR/runs/run-daily.meta.json" <<EOF
+{"id":"run-daily","project":"demo","kind":"branch","sha":"abcdef0123456789","status":"timeout","source":"daily","exit_code":124,"duration":600,"attempts":1}
+EOF
+  export PROVIDER=gitcode SITE_PUBLIC_URL="https://ci.example.com" POST_DAILY_STATUS=true
+  unset FAKE_DAILY_ISSUE || true
+  : >"$FAKE_CURL_LOG"
+  # shellcheck source=/dev/null
+  source "$ROOT/adapters/gitcode.sh"
+  report_daily_status run-daily
+  grep -q "/repos/o/issues?" "$FAKE_CURL_LOG" || { echo "FAIL: daily issue create url"; cat "$FAKE_CURL_LOG"; exit 1; }
+  grep -q "watchci-daily" "$FAKE_CURL_LOG" || { echo "FAIL: daily issue marker"; cat "$FAKE_CURL_LOG"; exit 1; }
+  grep -q "WatchCI daily · timeout" "$FAKE_CURL_LOG" || { echo "FAIL: daily issue title"; cat "$FAKE_CURL_LOG"; exit 1; }
+  if grep -q "/statuses/" "$FAKE_CURL_LOG"; then
+    echo "FAIL: gitcode daily must not post commit status"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  echo "daily issue create ok"
+
+  export FAKE_DAILY_ISSUE=update
+  : >"$FAKE_CURL_LOG"
+  report_daily_status run-daily
+  grep -q "/repos/o/issues/15" "$FAKE_CURL_LOG" || { echo "FAIL: daily issue update url"; cat "$FAKE_CURL_LOG"; exit 1; }
+  if grep -q " -X POST\|POST " "$FAKE_CURL_LOG"; then
+    echo "FAIL: existing daily issue should PATCH"; cat "$FAKE_CURL_LOG"; exit 1
+  fi
+  echo "daily issue update ok"
 '
 
 # --- PR merge dedup + daily ---
